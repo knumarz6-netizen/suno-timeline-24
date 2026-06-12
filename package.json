@@ -1,0 +1,11 @@
+{
+  "name": "suno-timeline",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.14.1 <25"
+  },
+  "scripts": {
+    "start": "node --use-system-ca server.mjs"
+  }
+}

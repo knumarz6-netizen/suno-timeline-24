@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: suno-timeline-24
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: TRUST_PROXY
+        value: "true"
+      - key: ABUSE_HASH_SECRET
+        generateValue: true
+      - key: ADMIN_PURGE_KEY
+        sync: false
