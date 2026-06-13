@@ -99,7 +99,7 @@ button {
 }
 
 body.has-player-dock .page-shell {
-  padding-bottom: 126px;
+  padding-bottom: 196px;
 }
 
 .hero {
@@ -937,6 +937,6 @@ body.radio-mode .player-dock__frame {
   }
 
   body.has-player-dock .page-shell {
-    padding-bottom: 138px;
+    padding-bottom: 208px;
   }
 }

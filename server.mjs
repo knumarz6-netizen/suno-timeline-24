@@ -1515,7 +1515,7 @@ async function fetchTrackMetadata(canonicalUrl) {
   const durationSeconds = parseDurationSeconds(html);
 
   return {
-    title: ogTitle || parseTitleFromTitleTag(titleTag),
+    title: decodeHtml(ogTitle) || parseTitleFromTitleTag(titleTag),
     artist: parseArtist(titleTag, description),
     imageUrl,
     durationSeconds,
@@ -1555,6 +1555,8 @@ function parseArtist(titleTag, description) {
 
 function decodeHtml(value) {
   return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#([0-9]+);/g, (_, decimal) => String.fromCodePoint(Number.parseInt(decimal, 10)))
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
