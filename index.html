@@ -38,7 +38,7 @@
               &#26354;&#12399;&#12479;&#12452;&#12512;&#12521;&#12452;&#12531;&#12363;&#12425;24&#26178;&#38291;&#12391;&#28040;&#12360;&#12414;&#12377;&#12290;
             </p>
             <p class="composer__rule">
-              タイムラインはメンテナンスで予告なく初期化されることがあります。
+              &#12479;&#12452;&#12512;&#12521;&#12452;&#12531;&#12399;&#12513;&#12531;&#12486;&#12490;&#12531;&#12473;&#12391;&#20104;&#21578;&#12394;&#12367;&#21021;&#26399;&#21270;&#12373;&#12428;&#12427;&#12371;&#12392;&#12364;&#12354;&#12426;&#12414;&#12377;&#12290;
             </p>
           </div>
 
@@ -66,15 +66,22 @@
 
         <section class="timeline" aria-labelledby="timeline-title">
           <div class="timeline__header">
-            <p class="section-label">Timeline</p>
             <h2 id="timeline-title">
-              &#27969;&#12428;&#12390;&#12356;&#12427;&#26354;
+              TIMELINE
             </h2>
             <p class="timeline__rule">
               &#26354;&#12399;&#12479;&#12452;&#12512;&#12521;&#12452;&#12531;&#12363;&#12425;24&#26178;&#38291;&#12391;&#28040;&#12360;&#12414;&#12377;&#12290;
             </p>
             <p class="timeline__rule">
-              タイムラインはメンテナンスで予告なく初期化されることがあります。
+              &#12479;&#12452;&#12512;&#12521;&#12452;&#12531;&#12399;&#12513;&#12531;&#12486;&#12490;&#12531;&#12473;&#12391;&#20104;&#21578;&#12394;&#12367;&#21021;&#26399;&#21270;&#12373;&#12428;&#12427;&#12371;&#12392;&#12364;&#12354;&#12426;&#12414;&#12377;&#12290;
+            </p>
+            <div class="timeline__controls">
+              <button id="autoplay-toggle" class="autoplay-toggle" type="button" aria-pressed="false">
+                AUTO PLAY
+              </button>
+            </div>
+            <p class="timeline__autoplay-note">
+              ※AUTO PLAY は iPhone / Safari の環境では想定通りの挙動をしない可能性があります
             </p>
           </div>
 
@@ -91,13 +98,39 @@
       <section id="player-dock" class="player-dock" hidden aria-live="polite">
         <div class="player-dock__meta">
           <p id="player-dock-artist" class="player-dock__artist"></p>
+          <div id="radio-controls" class="player-dock__controls" hidden>
+            <button
+              id="start-track-button"
+              class="player-dock__button player-dock__button--start"
+              type="button"
+              hidden
+            >
+              START
+            </button>
+            <button
+              id="next-track-button"
+              class="player-dock__button player-dock__button--next"
+              type="button"
+              hidden
+            >
+              NEXT
+            </button>
+            <button
+              id="stop-radio-button"
+              class="player-dock__button player-dock__button--stop"
+              type="button"
+              hidden
+            >
+              STOP
+            </button>
+          </div>
         </div>
         <div class="player-dock__frame">
           <iframe
             id="player-dock-iframe"
             loading="eager"
             referrerpolicy="strict-origin-when-cross-origin"
-            allow="autoplay"
+            allow="autoplay *; fullscreen *; encrypted-media *"
             title="Suno bottom player"
           ></iframe>
         </div>
@@ -117,11 +150,9 @@
             <h3 class="track-card__title"></h3>
             <p class="track-card__artist"></p>
           </div>
-        </div>
-
-        <div class="track-card__player-shell">
           <button class="track-card__play-button" type="button">
-            この曲を再生
+            <span class="track-card__play-icon" aria-hidden="true">&#9654;</span>
+            <span class="sr-only">Play</span>
           </button>
         </div>
 
@@ -140,7 +171,7 @@
           </button>
           <button class="report-button" type="button" aria-pressed="false">
             <span class="report-button__icon" aria-hidden="true">&#9888;</span>
-            <span class="report-button__label">通報</span>
+            <span class="report-button__label">&#36890;&#22577;</span>
           </button>
           <div class="track-stat" aria-label="Play count">
             <span class="track-stat__icon" aria-hidden="true">&#9654;</span>

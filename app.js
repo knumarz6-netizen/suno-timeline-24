@@ -3,22 +3,32 @@ const TIMELINE_ENDPOINT = "/api/timeline";
 const TRACKS_ENDPOINT = "/api/tracks";
 const TRACK_LIFETIME_MS = 24 * 60 * 60 * 1000;
 const REPORT_LIFETIME_MS = 60 * 60 * 1000;
+const TIMELINE_LIVE_REFRESH_MS = 5000;
+const DEFAULT_DURATION_SECONDS = 4 * 60;
+const AUTO_ADVANCE_BUFFER_MS = 1800;
 const MAX_SUNO_URL_LENGTH = 2048;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const SUNO_HOSTNAMES = new Set(["suno.com", "www.suno.com"]);
 const SUNO_SHARE_KEY_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
 
 const form = document.querySelector("#track-form");
+const layout = document.querySelector(".layout");
 const urlInput = document.querySelector("#track-url");
 const feedback = document.querySelector("#form-feedback");
 const timelineList = document.querySelector("#timeline-list");
 const emptyState = document.querySelector("#empty-state");
 const emptyStateMessage = emptyState.querySelector("p");
 const trackTemplate = document.querySelector("#track-template");
+const autoPlayToggle = document.querySelector("#autoplay-toggle");
 const submitButton = form.querySelector('button[type="submit"]');
 const playerDock = document.querySelector("#player-dock");
 const playerDockArtist = document.querySelector("#player-dock-artist");
 const playerDockIframe = document.querySelector("#player-dock-iframe");
+const playerDockFrame = document.querySelector(".player-dock__frame");
+const radioControls = document.querySelector("#radio-controls");
+const startTrackButton = document.querySelector("#start-track-button");
+const nextTrackButton = document.querySelector("#next-track-button");
+const stopRadioButton = document.querySelector("#stop-radio-button");
 
 const anonymousClientId = ensureAnonymousClientId();
 const pendingLikeIds = new Set();
@@ -27,10 +37,38 @@ const prefetchedEmbedUrls = new Set();
 
 let tracks = [];
 let activeTrackId = null;
+let autoPlayMode = false;
+let autoPlayQueueIds = [];
+let sequenceTrackId = null;
+let autoPlayTimeout = null;
+let autoPlayScheduledTrackId = null;
+let autoPlayAdvanceAtMs = 0;
 let timelineClock = null;
+let timelineLiveRefresh = null;
 let timelineRefreshInFlight = false;
 
 initializeApp();
+
+startTrackButton?.addEventListener("click", () => {
+  startCurrentSequenceTrack();
+});
+
+autoPlayToggle?.addEventListener("click", () => {
+  if (autoPlayMode) {
+    stopAutoPlayMode();
+    return;
+  }
+
+  startAutoPlayFromTop();
+});
+
+nextTrackButton?.addEventListener("click", () => {
+  advanceToNextTrack();
+});
+
+stopRadioButton?.addEventListener("click", () => {
+  stopAutoPlayMode();
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -74,6 +112,7 @@ form.addEventListener("submit", async (event) => {
 
 async function initializeApp() {
   startTimelineClock();
+  startLiveTimelineRefresh();
   updateEmptyState("\u66f2\u3092\u8aad\u307f\u8fbc\u3093\u3067\u3044\u307e\u3059\u3002");
   emptyState.hidden = false;
   await fetchTimeline();
@@ -83,22 +122,56 @@ async function fetchTimeline() {
   const response = await fetchJson(TIMELINE_ENDPOINT);
 
   if (!response.ok) {
+    autoPlayMode = false;
+    autoPlayQueueIds = [];
+    clearAutoPlayAdvance();
     tracks = [];
     renderTimeline();
     renderPlayerDock();
+    renderAutoPlayToggle();
+    renderRadioControls();
+    renderRadioMode();
     updateEmptyState(response.message || "\u30bf\u30a4\u30e0\u30e9\u30a4\u30f3\u306e\u8aad\u307f\u8fbc\u307f\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002");
     emptyState.hidden = false;
     return;
   }
 
-  tracks = Array.isArray(response.tracks) ? response.tracks : [];
-  renderTimeline();
+  const nextTracks = Array.isArray(response.tracks) ? response.tracks : [];
+  const previousSignature = buildTimelineSignature(tracks);
+  const nextSignature = buildTimelineSignature(nextTracks);
+  const shouldRerenderTimeline = previousSignature !== nextSignature;
+
+  tracks = nextTracks;
+  syncActiveTrack();
+  syncSequenceTrack();
+
+  if (shouldRerenderTimeline) {
+    renderTimeline();
+  }
+
   renderPlayerDock();
+  renderAutoPlayToggle();
+  renderRadioControls();
+  renderRadioMode();
   updateEmptyState("\u307e\u3060\u66f2\u306f\u3042\u308a\u307e\u305b\u3093\u3002\u6700\u521d\u306e1\u66f2\u3092\u6d41\u3057\u3066\u304f\u3060\u3055\u3044\u3002");
+
+  if (autoPlayMode) {
+    if (tracks.length === 0) {
+      stopAutoPlayMode({
+        quiet: true,
+      });
+    } else if (usesManualSequenceMode()) {
+      clearAutoPlayAdvance();
+    } else if (activeTrackId === null) {
+      activateQueuedTrackFromStart();
+    } else {
+      scheduleAutoPlayAdvance();
+    }
+  }
 }
 
 function renderTimeline() {
-  timelineList.replaceChildren();
+  timelineList.textContent = "";
   emptyState.hidden = tracks.length !== 0;
 
   const fragment = document.createDocumentFragment();
@@ -132,10 +205,9 @@ function renderTimeline() {
     title.textContent = track.title || "Untitled";
     artist.textContent = track.artist || "Unknown artist";
     playCount.textContent = String(track.playCount ?? 0);
+    playCount.dataset.trackId = String(track.id);
     likeCount.textContent = String(track.likeCount ?? 0);
-    playButton.dataset.active = String(track.id === activeTrackId);
-    playButton.textContent =
-      track.id === activeTrackId ? "\u518d\u751f\u4e2d\u306e\u66f2" : "\u3053\u306e\u66f2\u3092\u518d\u751f";
+    renderTrackPlayButton(playButton, track.id === activeTrackId);
 
     updateLikeButton(likeButton, likeIcon, track);
     likeButton.disabled = pendingLikeIds.has(track.id);
@@ -152,7 +224,7 @@ function renderTimeline() {
     });
 
     playButton.addEventListener("pointerdown", () => {
-      activateTrack(track, playCount);
+      prefetchEmbed(track.embedUrl);
     });
 
     playButton.addEventListener("click", () => {
@@ -228,22 +300,76 @@ function renderTimeline() {
   updateCountdownMeters();
 }
 
-function renderPlayerDock() {
-  const activeTrack = tracks.find((track) => track.id === activeTrackId);
+function renderTrackPlayButton(button, isActive) {
+  button.dataset.active = String(isActive);
+  button.setAttribute("aria-label", isActive ? "Now playing" : "Play");
+  button.innerHTML = isActive
+    ? '<span class="track-card__play-status">NOW PLAYING</span>'
+    : '<span class="track-card__play-icon" aria-hidden="true">&#9654;</span><span class="sr-only">Play</span>';
+}
 
-  if (!activeTrack) {
+function renderPlayerDock(options = {}) {
+  const currentTrack = getPlayerDockTrack();
+
+  if (!currentTrack) {
     playerDock.hidden = true;
     playerDockIframe.src = "about:blank";
     playerDockArtist.textContent = "";
+    if (playerDockFrame) {
+      playerDockFrame.hidden = true;
+    }
     document.body.classList.remove("has-player-dock");
+    renderRadioControls();
     return;
   }
 
+  const shouldShowFrame = activeTrackId === currentTrack.id;
   playerDock.hidden = false;
-  playerDockArtist.textContent = activeTrack.artist || "Unknown artist";
-  playerDockIframe.src = buildAutoplayEmbedUrl(activeTrack.embedUrl);
+  playerDockArtist.textContent = currentTrack.artist || "Unknown artist";
+
+  if (playerDockFrame) {
+    playerDockFrame.hidden = !shouldShowFrame;
+  }
+
+  if (shouldShowFrame) {
+    updatePlayerDockEmbed(currentTrack.embedUrl, Boolean(options.forceRestart));
+  } else {
+    playerDockIframe.src = "about:blank";
+  }
+
+  renderRadioControls();
 
   document.body.classList.add("has-player-dock");
+}
+
+function syncTrackPlaybackButtons(previousTrackId, nextTrackId) {
+  const trackIds = new Set([previousTrackId, nextTrackId].filter((value) => value !== null));
+
+  trackIds.forEach((trackId) => {
+    const card = timelineList.querySelector(`[data-track-id="${trackId}"]`);
+
+    if (!card) {
+      return;
+    }
+
+    const playButton = card.querySelector(".track-card__play-button");
+
+    if (!playButton) {
+      return;
+    }
+
+    renderTrackPlayButton(playButton, trackId === nextTrackId);
+  });
+}
+
+function updateTrackPlayCount(trackId, playCount) {
+  const playCountElement = timelineList.querySelector(`.track-stat__count[data-track-id="${trackId}"]`);
+
+  if (!playCountElement) {
+    return;
+  }
+
+  playCountElement.textContent = String(playCount ?? 0);
 }
 
 function updateLikeButton(button, icon, track) {
@@ -268,12 +394,55 @@ function syncTrack(currentTrack, nextTrack) {
   currentTrack.title = nextTrack.title;
   currentTrack.artist = nextTrack.artist;
   currentTrack.imageUrl = nextTrack.imageUrl;
+  currentTrack.durationSeconds = nextTrack.durationSeconds;
   currentTrack.playCount = nextTrack.playCount;
   currentTrack.reportActive = nextTrack.reportActive;
   currentTrack.reportStartedAt = nextTrack.reportStartedAt;
   currentTrack.createdAt = nextTrack.createdAt;
   currentTrack.likeCount = nextTrack.likeCount;
   currentTrack.liked = nextTrack.liked;
+}
+
+function buildTimelineSignature(trackList) {
+  return JSON.stringify(
+    trackList.map((track) => [
+      track.id,
+      track.trackKey,
+      track.title,
+      track.artist,
+      track.imageUrl,
+      track.durationSeconds,
+      track.playCount,
+      track.likeCount,
+      track.liked,
+      track.reportActive,
+      track.reportStartedAt,
+      track.createdAt,
+    ])
+  );
+}
+
+function syncActiveTrack() {
+  if (tracks.some((track) => track.id === activeTrackId)) {
+    return;
+  }
+
+  activeTrackId = null;
+  clearAutoPlayAdvance();
+}
+
+function syncSequenceTrack() {
+  if (!autoPlayMode || !usesManualSequenceMode()) {
+    sequenceTrackId = null;
+    return;
+  }
+
+  if (tracks.some((track) => track.id === sequenceTrackId)) {
+    return;
+  }
+
+  const fallbackTrack = getFirstAutoPlayTrack();
+  sequenceTrackId = fallbackTrack ? fallbackTrack.id : null;
 }
 
 function syncTrackInCollection(nextTrack) {
@@ -395,15 +564,53 @@ function isUuid(value) {
 }
 
 function ensureAnonymousClientId() {
-  const existing = window.localStorage.getItem(ANONYMOUS_CLIENT_ID_KEY);
+  const existing = readLocalStorage(ANONYMOUS_CLIENT_ID_KEY);
 
   if (existing) {
     return existing;
   }
 
-  const created = crypto.randomUUID();
-  window.localStorage.setItem(ANONYMOUS_CLIENT_ID_KEY, created);
+  const created = createAnonymousClientId();
+  writeLocalStorage(ANONYMOUS_CLIENT_ID_KEY, created);
   return created;
+}
+
+function createAnonymousClientId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  const randomBytes = new Uint8Array(16);
+
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(randomBytes);
+  } else {
+    for (let index = 0; index < randomBytes.length; index += 1) {
+      randomBytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+
+  randomBytes[6] = (randomBytes[6] & 0x0f) | 0x40;
+  randomBytes[8] = (randomBytes[8] & 0x3f) | 0x80;
+
+  const hex = Array.from(randomBytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function readLocalStorage(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeLocalStorage(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (error) {
+    // Ignore storage write failures and continue with the in-memory identifier.
+  }
 }
 
 async function fetchJson(url, options = {}) {
@@ -455,6 +662,24 @@ function buildAutoplayEmbedUrl(embedUrl) {
   return url.toString();
 }
 
+function updatePlayerDockEmbed(embedUrl, forceRestart = false) {
+  const nextSrc = buildAutoplayEmbedUrl(embedUrl);
+
+  if (playerDockIframe.src === nextSrc && !forceRestart) {
+    return;
+  }
+
+  if (playerDockIframe.src === nextSrc && forceRestart) {
+    playerDockIframe.src = "about:blank";
+    window.requestAnimationFrame(() => {
+      playerDockIframe.src = nextSrc;
+    });
+    return;
+  }
+
+  playerDockIframe.src = nextSrc;
+}
+
 function startTimelineClock() {
   if (timelineClock) {
     return;
@@ -463,6 +688,23 @@ function startTimelineClock() {
   timelineClock = window.setInterval(() => {
     updateCountdownMeters();
   }, 1000);
+}
+
+function startLiveTimelineRefresh() {
+  if (timelineLiveRefresh) {
+    return;
+  }
+
+  timelineLiveRefresh = window.setInterval(() => {
+    if (document.hidden || timelineRefreshInFlight) {
+      return;
+    }
+
+    timelineRefreshInFlight = true;
+    void fetchTimeline().finally(() => {
+      timelineRefreshInFlight = false;
+    });
+  }, TIMELINE_LIVE_REFRESH_MS);
 }
 
 function updateCountdownMeters() {
@@ -566,6 +808,295 @@ function setSubmitting(isSubmitting) {
   submitButton.disabled = isSubmitting;
 }
 
+function renderAutoPlayToggle() {
+  if (!autoPlayToggle) {
+    return;
+  }
+
+  autoPlayToggle.disabled = tracks.length === 0;
+  autoPlayToggle.dataset.active = String(autoPlayMode);
+  autoPlayToggle.setAttribute("aria-pressed", String(autoPlayMode));
+  autoPlayToggle.textContent = "AUTO PLAY";
+}
+
+function renderRadioControls() {
+  if (!radioControls || !startTrackButton || !nextTrackButton || !stopRadioButton) {
+    return;
+  }
+
+  if (!autoPlayMode) {
+    radioControls.hidden = true;
+    startTrackButton.hidden = true;
+    nextTrackButton.hidden = true;
+    stopRadioButton.hidden = true;
+    startTrackButton.disabled = true;
+    nextTrackButton.disabled = true;
+    stopRadioButton.disabled = true;
+    return;
+  }
+
+  if (usesManualSequenceMode()) {
+    radioControls.hidden = !autoPlayMode || sequenceTrackId === null;
+    startTrackButton.hidden = false;
+    nextTrackButton.hidden = false;
+    stopRadioButton.hidden = false;
+    startTrackButton.disabled = sequenceTrackId === null;
+    nextTrackButton.disabled = !canAdvanceToNextTrack();
+  } else {
+    radioControls.hidden = !autoPlayMode || activeTrackId === null;
+    startTrackButton.hidden = true;
+    nextTrackButton.hidden = false;
+    stopRadioButton.hidden = false;
+    startTrackButton.disabled = true;
+    nextTrackButton.disabled = !canAdvanceToNextTrack();
+  }
+
+  stopRadioButton.disabled = !autoPlayMode;
+}
+
+function renderRadioMode() {
+  document.body.classList.toggle("radio-mode", autoPlayMode);
+
+  if (layout) {
+    layout.inert = autoPlayMode;
+  }
+}
+
+function startAutoPlayFromTop(options = {}) {
+  if (tracks.length === 0) {
+    return;
+  }
+
+  autoPlayQueueIds = tracks.map((track) => track.id);
+  autoPlayMode = true;
+
+  if (usesManualSequenceMode()) {
+    const firstTrack = getFirstAutoPlayTrack();
+    sequenceTrackId = firstTrack ? firstTrack.id : null;
+    activeTrackId = null;
+    clearAutoPlayAdvance();
+    renderPlayerDock();
+    renderAutoPlayToggle();
+    renderRadioControls();
+    renderRadioMode();
+  } else {
+    const firstTrack = getFirstAutoPlayTrack();
+
+    if (!firstTrack) {
+      autoPlayMode = false;
+      return;
+    }
+
+    activateTrack(firstTrack, null, {
+      force: true,
+      suppressAutoPlayRefresh: true,
+    });
+
+    renderAutoPlayToggle();
+    renderRadioControls();
+    renderRadioMode();
+    scheduleAutoPlayAdvance();
+  }
+
+  if (!options.quiet) {
+    setFeedback("連続再生モードで上から流します。");
+  }
+}
+
+function stopAutoPlayMode(options = {}) {
+  autoPlayMode = false;
+  autoPlayQueueIds = [];
+  sequenceTrackId = null;
+  const previousActiveTrackId = activeTrackId;
+  activeTrackId = null;
+  clearAutoPlayAdvance();
+  renderPlayerDock();
+  syncTrackPlaybackButtons(previousActiveTrackId, activeTrackId);
+  renderAutoPlayToggle();
+  renderRadioControls();
+  renderRadioMode();
+
+  if (!options.quiet) {
+    setFeedback("連続再生モードを止めました。");
+  }
+}
+
+function clearAutoPlayAdvance() {
+  if (autoPlayTimeout === null) {
+    autoPlayScheduledTrackId = null;
+    autoPlayAdvanceAtMs = 0;
+    return;
+  }
+
+  window.clearTimeout(autoPlayTimeout);
+  autoPlayTimeout = null;
+  autoPlayScheduledTrackId = null;
+  autoPlayAdvanceAtMs = 0;
+}
+
+function scheduleAutoPlayAdvance() {
+  if (!autoPlayMode || usesManualSequenceMode()) {
+    clearAutoPlayAdvance();
+    return;
+  }
+
+  const currentTrack = tracks.find((track) => track.id === activeTrackId);
+
+  if (!currentTrack) {
+    return;
+  }
+
+  if (autoPlayTimeout !== null && autoPlayScheduledTrackId === currentTrack.id) {
+    return;
+  }
+
+  clearAutoPlayAdvance();
+  const delayMs = getAutoAdvanceDelay(currentTrack);
+  autoPlayScheduledTrackId = currentTrack.id;
+  autoPlayAdvanceAtMs = Date.now() + delayMs;
+
+  autoPlayTimeout = window.setTimeout(() => {
+    autoPlayTimeout = null;
+    autoPlayScheduledTrackId = null;
+    autoPlayAdvanceAtMs = 0;
+
+    if (!autoPlayMode) {
+      return;
+    }
+
+    const nextTrack = getNextAutoPlayTrack(currentTrack.id);
+
+    if (!nextTrack) {
+      stopAutoPlayMode({
+        quiet: true,
+      });
+      return;
+    }
+
+    activateTrack(nextTrack, null, {
+      force: true,
+    });
+  }, delayMs);
+}
+
+function getNextAutoPlayTrack(currentTrackId) {
+  const currentIndex = autoPlayQueueIds.indexOf(currentTrackId);
+
+  if (currentIndex < 0) {
+    return null;
+  }
+
+  for (let index = currentIndex + 1; index < autoPlayQueueIds.length; index += 1) {
+    const nextTrack = tracks.find((track) => track.id === autoPlayQueueIds[index]);
+
+    if (nextTrack) {
+      return nextTrack;
+    }
+  }
+
+  return null;
+}
+
+function getFirstAutoPlayTrack() {
+  for (const trackId of autoPlayQueueIds) {
+    const track = tracks.find((item) => item.id === trackId);
+
+    if (track) {
+      return track;
+    }
+  }
+
+  return null;
+}
+
+function canAdvanceToNextTrack() {
+  if (!autoPlayMode) {
+    return false;
+  }
+
+  if (usesManualSequenceMode()) {
+    return sequenceTrackId !== null && Boolean(getNextAutoPlayTrack(sequenceTrackId));
+  }
+
+  if (activeTrackId === null) {
+    return false;
+  }
+
+  return Boolean(getNextAutoPlayTrack(activeTrackId));
+}
+
+function advanceToNextTrack() {
+  if (!autoPlayMode) {
+    return;
+  }
+
+  const currentTrackId = usesManualSequenceMode() ? sequenceTrackId : activeTrackId;
+  const nextTrack = getNextAutoPlayTrack(currentTrackId);
+
+  if (!nextTrack) {
+    stopAutoPlayMode({
+      quiet: true,
+    });
+    return;
+  }
+
+  if (usesManualSequenceMode()) {
+    playSequenceTrack(nextTrack, {
+      force: true,
+    });
+    return;
+  }
+
+  activateTrack(nextTrack, null, {
+    force: true,
+  });
+}
+
+function activateQueuedTrackFromStart() {
+  const firstTrack = getFirstAutoPlayTrack();
+
+  if (!firstTrack) {
+    stopAutoPlayMode({
+      quiet: true,
+    });
+    return;
+  }
+
+  activateTrack(firstTrack, null, {
+    force: true,
+  });
+}
+
+function startCurrentSequenceTrack() {
+  if (!usesManualSequenceMode() || sequenceTrackId === null) {
+    return;
+  }
+
+  const currentTrack = tracks.find((track) => track.id === sequenceTrackId);
+
+  if (!currentTrack) {
+    return;
+  }
+
+  playSequenceTrack(currentTrack, {
+    force: true,
+  });
+}
+
+function playSequenceTrack(track, options = {}) {
+  sequenceTrackId = track.id;
+  activateTrack(track, null, options);
+}
+
+function getAutoAdvanceDelay(track) {
+  const durationSeconds =
+    typeof track?.durationSeconds === "number" && track.durationSeconds > 0
+      ? track.durationSeconds
+      : DEFAULT_DURATION_SECONDS;
+
+  return Math.max(4000, Math.round(durationSeconds * 1000 + AUTO_ADVANCE_BUFFER_MS));
+}
+
 async function recordPlay(trackId, playCountElement) {
   const response = await fetchJson(`/api/tracks/${trackId}/play`, {
     method: "POST",
@@ -576,9 +1107,9 @@ async function recordPlay(trackId, playCountElement) {
   }
 
   syncTrackInCollection(response.track);
+  updateTrackPlayCount(trackId, response.track.playCount);
 
   if (activeTrackId === trackId) {
-    renderTimeline();
     return;
   }
 
@@ -589,14 +1120,37 @@ async function recordPlay(trackId, playCountElement) {
   }
 }
 
-function activateTrack(track, playCountElement) {
-  if (track.id === activeTrackId) {
+function activateTrack(track, playCountElement, options = {}) {
+  const force = Boolean(options.force);
+  const suppressAutoPlayRefresh = Boolean(options.suppressAutoPlayRefresh);
+
+  if (track.id === activeTrackId && !force) {
     return;
   }
 
+  const previousActiveTrackId = activeTrackId;
   activeTrackId = track.id;
-  renderPlayerDock();
-  renderTimeline();
+
+  if (autoPlayMode && usesManualSequenceMode()) {
+    sequenceTrackId = track.id;
+  }
+
+  renderPlayerDock({
+    forceRestart: force,
+  });
+  syncTrackPlaybackButtons(previousActiveTrackId, activeTrackId);
+
+  if (!suppressAutoPlayRefresh) {
+    renderAutoPlayToggle();
+    renderRadioControls();
+    renderRadioMode();
+
+    if (autoPlayMode) {
+      scheduleAutoPlayAdvance();
+    } else {
+      clearAutoPlayAdvance();
+    }
+  }
 
   void recordPlay(track.id, playCountElement);
 }
@@ -614,4 +1168,23 @@ function prefetchEmbed(embedUrl) {
   link.crossOrigin = "anonymous";
   document.head.append(link);
   prefetchedEmbedUrls.add(href);
+}
+
+function getPlayerDockTrack() {
+  if (autoPlayMode && usesManualSequenceMode() && sequenceTrackId !== null) {
+    return tracks.find((track) => track.id === sequenceTrackId) || null;
+  }
+
+  return tracks.find((track) => track.id === activeTrackId) || null;
+}
+
+function usesManualSequenceMode() {
+  return isIphoneSafari();
+}
+
+function isIphoneSafari() {
+  const userAgent = navigator.userAgent || "";
+  const isIphone = /iPhone/.test(userAgent);
+  const isSafari = /Safari/.test(userAgent) && !/CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo|GSA/.test(userAgent);
+  return isIphone && isSafari;
 }

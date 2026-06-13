@@ -132,6 +132,7 @@ function createSqliteDatabase() {
       title TEXT NOT NULL DEFAULT '',
       artist TEXT NOT NULL DEFAULT '',
       image_url TEXT NOT NULL DEFAULT '',
+      duration_seconds REAL NOT NULL DEFAULT 0,
       play_count INTEGER NOT NULL DEFAULT 0,
       report_active INTEGER NOT NULL DEFAULT 0,
       report_started_at TEXT,
@@ -173,6 +174,7 @@ function createSqliteDatabase() {
   ensureSqliteTracksColumn(db, "title", "TEXT NOT NULL DEFAULT ''");
   ensureSqliteTracksColumn(db, "artist", "TEXT NOT NULL DEFAULT ''");
   ensureSqliteTracksColumn(db, "image_url", "TEXT NOT NULL DEFAULT ''");
+  ensureSqliteTracksColumn(db, "duration_seconds", "REAL NOT NULL DEFAULT 0");
   ensureSqliteTracksColumn(db, "play_count", "INTEGER NOT NULL DEFAULT 0");
   ensureSqliteTracksColumn(db, "report_active", "INTEGER NOT NULL DEFAULT 0");
   ensureSqliteTracksColumn(db, "report_started_at", "TEXT");
@@ -187,6 +189,7 @@ function createSqliteDatabase() {
       t.title,
       t.artist,
       t.image_url,
+      t.duration_seconds,
       t.play_count,
       t.report_active,
       t.report_started_at,
@@ -216,6 +219,7 @@ function createSqliteDatabase() {
       t.title,
       t.artist,
       t.image_url,
+      t.duration_seconds,
       t.play_count,
       t.report_active,
       t.report_started_at,
@@ -245,6 +249,7 @@ function createSqliteDatabase() {
       t.title,
       t.artist,
       t.image_url,
+      t.duration_seconds,
       t.play_count,
       t.report_active,
       t.report_started_at,
@@ -273,8 +278,9 @@ function createSqliteDatabase() {
       title,
       artist,
       image_url,
+      duration_seconds,
       created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertLikeStatement = db.prepare(`
@@ -420,6 +426,7 @@ function createSqliteDatabase() {
         track.title,
         track.artist,
         track.imageUrl,
+        track.durationSeconds,
         track.createdAt
       );
       return result.changes > 0;
@@ -499,6 +506,7 @@ async function createPostgresDatabase() {
       title TEXT NOT NULL DEFAULT '',
       artist TEXT NOT NULL DEFAULT '',
       image_url TEXT NOT NULL DEFAULT '',
+      duration_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
       play_count INTEGER NOT NULL DEFAULT 0,
       report_active BOOLEAN NOT NULL DEFAULT FALSE,
       report_started_at TIMESTAMPTZ,
@@ -538,6 +546,7 @@ async function createPostgresDatabase() {
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS artist TEXT NOT NULL DEFAULT '';
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS image_url TEXT NOT NULL DEFAULT '';
+    ALTER TABLE tracks ADD COLUMN IF NOT EXISTS duration_seconds DOUBLE PRECISION NOT NULL DEFAULT 0;
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS play_count INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS report_active BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS report_started_at TIMESTAMPTZ;
@@ -553,6 +562,7 @@ async function createPostgresDatabase() {
       t.title,
       t.artist,
       t.image_url,
+      t.duration_seconds,
       t.play_count,
       t.report_active,
       t.report_started_at,
@@ -582,6 +592,7 @@ async function createPostgresDatabase() {
       t.title,
       t.artist,
       t.image_url,
+      t.duration_seconds,
       t.play_count,
       t.report_active,
       t.report_started_at,
@@ -612,6 +623,7 @@ async function createPostgresDatabase() {
       t.title,
       t.artist,
       t.image_url,
+      t.duration_seconds,
       t.play_count,
       t.report_active,
       t.report_started_at,
@@ -657,9 +669,10 @@ async function createPostgresDatabase() {
             title,
             artist,
             image_url,
+            duration_seconds,
             created_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           ON CONFLICT (track_key) DO NOTHING
         `,
         [
@@ -670,6 +683,7 @@ async function createPostgresDatabase() {
           track.title,
           track.artist,
           track.imageUrl,
+          track.durationSeconds,
           track.createdAt,
         ]
       );
@@ -964,6 +978,7 @@ async function handleTrackCreate(request, response) {
       title: resolved.title,
       artist: resolved.artist,
       imageUrl: resolved.imageUrl,
+      durationSeconds: resolved.durationSeconds,
       createdAt,
     });
 
@@ -1163,6 +1178,7 @@ async function resolveTrack(sourceUrl) {
       title: metadata.title,
       artist: metadata.artist,
       imageUrl: metadata.imageUrl,
+      durationSeconds: metadata.durationSeconds,
     };
   }
 
@@ -1180,6 +1196,7 @@ async function resolveTrack(sourceUrl) {
       title: metadata.title,
       artist: metadata.artist,
       imageUrl: metadata.imageUrl,
+      durationSeconds: metadata.durationSeconds,
     };
   }
 
@@ -1210,6 +1227,7 @@ async function resolveTrack(sourceUrl) {
     title: metadata.title,
     artist: metadata.artist,
     imageUrl: metadata.imageUrl,
+    durationSeconds: metadata.durationSeconds,
   };
 }
 
@@ -1384,6 +1402,7 @@ function serializeTrackRow(row) {
     title: row.title,
     artist: row.artist,
     imageUrl: row.image_url,
+    durationSeconds: Number(row.duration_seconds || 0),
     playCount: Number(row.play_count || 0),
     reportActive: Boolean(row.report_active),
     reportStartedAt: row.report_started_at ? normalizeTimestamp(row.report_started_at) : null,
@@ -1484,12 +1503,25 @@ async function fetchTrackMetadata(canonicalUrl) {
   const ogTitle = extractMeta(html, /<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i);
   const description = extractMeta(html, /<meta[^>]+name="description"[^>]+content="([^"]+)"/i);
   const imageUrl = extractMeta(html, /<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i);
+  const durationSeconds = parseDurationSeconds(html);
 
   return {
     title: ogTitle || parseTitleFromTitleTag(titleTag),
     artist: parseArtist(titleTag, description),
     imageUrl,
+    durationSeconds,
   };
+}
+
+function parseDurationSeconds(html) {
+  const match = html.match(/\\?"duration\\?":\s*([0-9]+(?:\.[0-9]+)?)/i);
+
+  if (!match) {
+    return 0;
+  }
+
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function extractMeta(html, pattern) {
