@@ -566,7 +566,7 @@ function isUuid(value) {
 function ensureAnonymousClientId() {
   const existing = readLocalStorage(ANONYMOUS_CLIENT_ID_KEY);
 
-  if (existing) {
+  if (existing && isUuid(existing)) {
     return existing;
   }
 
