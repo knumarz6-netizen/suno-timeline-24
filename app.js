@@ -459,7 +459,7 @@ function parseSunoUrl(value) {
   if (typeof value !== "string") {
     return {
       ok: false,
-      message: "Sunoの共有リンクを貼ってください。",
+      message: "SUNOの共有リンクを貼ってください。",
     };
   }
 
@@ -501,7 +501,7 @@ function parseSunoUrl(value) {
   if (url.protocol !== "https:") {
     return {
       ok: false,
-      message: "https:// から始まるSunoリンクを貼ってください。",
+      message: "https:// から始まるSUNOリンクを貼ってください。",
     };
   }
 
@@ -515,7 +515,7 @@ function parseSunoUrl(value) {
   if (!SUNO_HOSTNAMES.has(url.hostname.toLowerCase())) {
     return {
       ok: false,
-      message: "Suno\u306e\u5171\u6709\u30ea\u30f3\u30af\u3092\u8cbc\u3063\u3066\u304f\u3060\u3055\u3044\u3002",
+      message: "SUNO\u306e\u5171\u6709\u30ea\u30f3\u30af\u3092\u8cbc\u3063\u3066\u304f\u3060\u3055\u3044\u3002",
     };
   }
 
@@ -539,7 +539,7 @@ function validateSunoPath(pathname) {
   if (segments.length !== 2) {
     return {
       ok: false,
-      message: "Sunoの共有リンクを貼ってください。",
+      message: "SUNOの共有リンクを貼ってください。",
     };
   }
 
@@ -555,7 +555,7 @@ function validateSunoPath(pathname) {
 
   return {
     ok: false,
-    message: "Sunoの共有リンクを貼ってください。",
+    message: "SUNOの共有リンクを貼ってください。",
   };
 }
 
@@ -645,15 +645,13 @@ async function fetchJson(url, options = {}) {
 
 function formatStamp(track) {
   const date = new Date(track.createdAt);
-  const stamp = new Intl.DateTimeFormat("ja-JP", {
+  return new Intl.DateTimeFormat("ja-JP", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
-
-  return `${stamp} / ${track.trackKey.slice(0, 8)}`;
 }
 
 function buildAutoplayEmbedUrl(embedUrl) {

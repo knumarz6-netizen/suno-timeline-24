@@ -698,10 +698,10 @@ body.radio-mode .track-card__meter-label {
   left: 16px;
   z-index: 10;
   display: grid;
-  gap: 8px;
+  gap: 0;
   width: min(920px, calc(100vw - 32px));
   margin: 0 auto;
-  padding: 10px 12px;
+  padding: 8px 12px 8px;
   border: 1px solid rgba(255, 255, 255, 0.84);
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.92);
@@ -714,6 +714,8 @@ body.radio-mode .track-card__meter-label {
 }
 
 .player-dock__meta {
+  display: grid;
+  gap: 2px;
   margin: 0;
   min-width: 0;
 }
@@ -779,8 +781,10 @@ body.radio-mode .track-card__meter-label {
 
 .player-dock__artist {
   margin: 0;
+  padding-top: 1px;
   color: var(--text-soft);
   font-size: 0.82rem;
+  line-height: 1.15;
 }
 
 .player-dock__frame {

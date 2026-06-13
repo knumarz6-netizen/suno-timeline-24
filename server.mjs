@@ -921,7 +921,7 @@ async function handleResolve(requestUrl, response) {
   } catch (error) {
     console.error("Track resolve failed", error);
     sendJson(response, 502, {
-      message: "Failed to resolve Suno track",
+      message: "Failed to resolve SUNO track",
     });
   }
 }
@@ -998,7 +998,7 @@ async function handleTrackCreate(request, response) {
   } catch (error) {
     console.error("Track create failed", error);
     sendJson(response, 502, {
-      message: "Sunoリンクの読み込みに失敗しました。もう一度試してください。",
+      message: "SUNOリンクの読み込みに失敗しました。もう一度試してください。",
     });
   }
 }
@@ -1302,7 +1302,7 @@ function validateSunoUrl(value) {
   if (typeof value !== "string") {
     return {
       ok: false,
-      message: "Sunoの共有リンクを貼ってください。",
+      message: "SUNOの共有リンクを貼ってください。",
     };
   }
 
@@ -1343,7 +1343,7 @@ function validateSunoUrl(value) {
   if (url.protocol !== "https:") {
     return {
       ok: false,
-      message: "https:// から始まるSunoリンクを貼ってください。",
+      message: "https:// から始まるSUNOリンクを貼ってください。",
     };
   }
 
@@ -1357,7 +1357,7 @@ function validateSunoUrl(value) {
   if (!SUNO_HOSTNAMES.has(url.hostname.toLowerCase())) {
     return {
       ok: false,
-      message: "Sunoの共有リンクを貼ってください。",
+      message: "SUNOの共有リンクを貼ってください。",
     };
   }
 
@@ -1381,7 +1381,7 @@ function validateSunoPath(pathname) {
   if (segments.length !== 2) {
     return {
       ok: false,
-      message: "Sunoの共有リンクを貼ってください。",
+      message: "SUNOの共有リンクを貼ってください。",
     };
   }
 
@@ -1397,7 +1397,7 @@ function validateSunoPath(pathname) {
 
   return {
     ok: false,
-    message: "Sunoの共有リンクを貼ってください。",
+    message: "SUNOの共有リンクを貼ってください。",
   };
 }
 
