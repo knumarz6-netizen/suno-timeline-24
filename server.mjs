@@ -37,7 +37,13 @@ const ANONYMOUS_CLIENT_ID_PATTERN =
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const SUNO_HOSTNAMES = new Set(["suno.com", "www.suno.com"]);
 const SUNO_SHARE_KEY_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
-const PUBLIC_FILES = new Set(["/index.html", "/styles.css", "/app.js"]);
+const PUBLIC_FILES = new Set([
+  "/index.html",
+  "/styles.css",
+  "/app.js",
+  "/robots.txt",
+  "/sitemap.xml",
+]);
 const GOOGLE_VERIFICATION_FILE_PATTERN = /^\/google[a-z0-9]+\.html$/i;
 const ASSETS_DIR = resolve(ROOT_DIR, "assets");
 
@@ -1933,6 +1939,8 @@ function getMimeType(filePath) {
       return "text/html; charset=utf-8";
     case ".js":
       return "application/javascript; charset=utf-8";
+    case ".xml":
+      return "application/xml; charset=utf-8";
     case ".jpg":
     case ".jpeg":
       return "image/jpeg";
