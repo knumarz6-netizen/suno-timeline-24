@@ -38,6 +38,7 @@ const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const SUNO_HOSTNAMES = new Set(["suno.com", "www.suno.com"]);
 const SUNO_SHARE_KEY_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
 const PUBLIC_FILES = new Set(["/index.html", "/styles.css", "/app.js"]);
+const GOOGLE_VERIFICATION_FILE_PATTERN = /^\/google[a-z0-9]+\.html$/i;
 const ASSETS_DIR = resolve(ROOT_DIR, "assets");
 
 const database = await createDatabase();
@@ -1147,9 +1148,11 @@ async function handleStatic(pathname, response) {
   const filePath = pathname === "/" ? "/index.html" : pathname;
   const absolutePath = resolve(ROOT_DIR, `.${filePath}`);
   const isRootPublicFile = PUBLIC_FILES.has(filePath);
+  const isGoogleVerificationFile =
+    GOOGLE_VERIFICATION_FILE_PATTERN.test(filePath) && isPathInside(absolutePath, ROOT_DIR);
   const isAssetFile = filePath.startsWith("/assets/") && isPathInside(absolutePath, ASSETS_DIR);
 
-  if (!isRootPublicFile && !isAssetFile) {
+  if (!isRootPublicFile && !isGoogleVerificationFile && !isAssetFile) {
     sendPlain(response, 404, "Not found");
     return;
   }
