@@ -245,8 +245,7 @@ body.has-player-dock .page-shell {
 }
 
 .composer h2,
-.timeline h2,
-.track-card__title {
+.timeline h2 {
   margin: 0;
   font-family: "Avenir Next Condensed", "Arial Narrow", "Avenir Next", sans-serif;
   font-weight: 700;
@@ -581,9 +580,12 @@ body.radio-mode .layout .timeline {
 }
 
 .track-card__title {
+  font-family: "Avenir Next", "Helvetica Neue", "Yu Gothic", sans-serif;
   font-size: 1.22rem;
   line-height: 1.08;
-  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: none;
 }
 
 .track-card__artist {
