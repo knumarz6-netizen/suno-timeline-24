@@ -289,6 +289,21 @@ body.radio-mode .player-dock {
   font-size: 0.92rem;
 }
 
+.composer__legal {
+  margin-top: -2px;
+  color: rgba(23, 25, 29, 0.42);
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.composer__legal p {
+  margin: 0;
+}
+
+.composer__legal p + p {
+  margin-top: 2px;
+}
+
 .timeline {
   padding: 22px;
 }
