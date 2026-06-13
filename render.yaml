@@ -8,6 +8,10 @@ services:
     healthCheckPath: /
     autoDeployTrigger: commit
     envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: require
       - key: TRUST_PROXY
         value: "true"
       - key: ABUSE_HASH_SECRET

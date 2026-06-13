@@ -1,61 +1,73 @@
-# Render 公開手順
+# Render + Supabase 公開メモ
 
-## 前提
+## 構成
 
-- このサイトは Render の無料 Web Service で公開できます。
-- 無料運用では SQLite は永続化しません。
-- 再デプロイや Render 側の再起動でタイムラインが空に戻ることがあります。
-- 今回の `24時間で消える` 仕様では、それを許容する前提です。
+- アプリ本体: Render Web Service
+- データベース: Supabase Postgres
+- ローカル開発: `DATABASE_URL` 未設定なら SQLite のまま動作
 
-## 1. GitHub に置く
+この構成にすると、Render の無料インスタンスが再起動しても曲データは Supabase 側に残ります。
 
-このフォルダを GitHub リポジトリに push します。
+## Render で設定する環境変数
 
-## 2. Render で新規作成
+- `DATABASE_URL`
+  Supabase の接続文字列をそのまま入れます。
+- `DATABASE_SSL`
+  通常は `require`
+- `TRUST_PROXY`
+  `true`
+- `ABUSE_HASH_SECRET`
+  長いランダム文字列
+- `ADMIN_PURGE_KEY`
+  管理者だけが知る長いランダム文字列
 
-1. Render ダッシュボードで `New > Blueprint` を選ぶ
-2. このリポジトリを接続する
-3. `render.yaml` を読み込ませる
+## Supabase 側で取る値
 
-`render.yaml` には以下を定義済みです。
+Supabase プロジェクト作成後、`Project Settings > Database` から接続情報を確認します。
+
+使うのは次のどちらかです。
+
+- `Connection string` の URI 形式
+- `Direct connection`
+
+Render には `DATABASE_URL` として 1 行で貼り付けます。
+
+例:
+
+```text
+postgresql://postgres.xxxxx:password@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres
+```
+
+## Render 側の流れ
+
+1. GitHub に push
+2. Render で `New > Blueprint`
+3. このリポジトリを選ぶ
+4. `DATABASE_URL` に Supabase の接続文字列を入力
+5. `ADMIN_PURGE_KEY` を入力
+6. `Deploy Blueprint`
+
+`render.yaml` で以下は自動設定されます。
 
 - `runtime: node`
 - `plan: free`
 - `buildCommand: npm install`
 - `startCommand: npm start`
-- `healthCheckPath: /`
+- `DATABASE_SSL=require`
+- `TRUST_PROXY=true`
 
-## 3. 環境変数を設定する
+## 管理者用の全曲削除ページ
 
-Render 側で次を設定します。
+`ADMIN_PURGE_KEY=abcdef123456` の場合、管理者 URL は次です。
 
-- `ADMIN_PURGE_KEY`
-  管理ページ用の長い秘密文字列
-  例: `suno-admin-2026-very-long-random-string`
+```text
+https://あなたのRenderのURL/admin/purge/abcdef123456
+```
 
-補足:
+このページから全曲削除できます。
 
-- `ABUSE_HASH_SECRET` は `render.yaml` で自動生成されます
-- `TRUST_PROXY=true` は設定済みです
+## 補足
 
-## 4. 公開後の管理ページURL
-
-`ADMIN_PURGE_KEY` を `abcdef123456` にした場合、管理ページは次です。
-
-`https://あなたのRenderのURL/admin/purge/abcdef123456`
-
-このURLを知っている人だけが、全曲削除ページを開けます。
-
-## 5. 仕様メモ
-
-- 投稿、いいね、荒らし対策履歴は SQLite に保存されます
-- 無料運用ではその SQLite は永続ではありません
-- 再デプロイ後にタイムラインが空になっても正常動作です
-
-## 6. 将来 Persistent Disk を付ける場合
-
-有料で Persistent Disk を付ける場合は、Render の環境変数に以下を追加します。
-
-- `DATA_DIR=/data`
-
-そのうえで Render のディスクのマウント先を `/data` にすると、同じコードのまま SQLite を永続化できます。
+- `DATABASE_URL` があると Postgres を使います。
+- `DATABASE_URL` がないとローカルの SQLite を使います。
+- 無料 Render はスリープするため、最初のアクセスだけ少し遅いことがあります。

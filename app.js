@@ -1,6 +1,8 @@
 const ANONYMOUS_CLIENT_ID_KEY = "suno-timeline-anonymous-client-id";
 const TIMELINE_ENDPOINT = "/api/timeline";
 const TRACKS_ENDPOINT = "/api/tracks";
+const TRACK_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const REPORT_LIFETIME_MS = 60 * 60 * 1000;
 const MAX_SUNO_URL_LENGTH = 2048;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const SUNO_HOSTNAMES = new Set(["suno.com", "www.suno.com"]);
@@ -20,10 +22,13 @@ const playerDockIframe = document.querySelector("#player-dock-iframe");
 
 const anonymousClientId = ensureAnonymousClientId();
 const pendingLikeIds = new Set();
+const pendingReportIds = new Set();
 const prefetchedEmbedUrls = new Set();
 
 let tracks = [];
 let activeTrackId = null;
+let timelineClock = null;
+let timelineRefreshInFlight = false;
 
 initializeApp();
 
@@ -68,6 +73,7 @@ form.addEventListener("submit", async (event) => {
 });
 
 async function initializeApp() {
+  startTimelineClock();
   updateEmptyState("\u66f2\u3092\u8aad\u307f\u8fbc\u3093\u3067\u3044\u307e\u3059\u3002");
   emptyState.hidden = false;
   await fetchTimeline();
@@ -99,16 +105,20 @@ function renderTimeline() {
 
   tracks.forEach((track) => {
     const node = trackTemplate.content.firstElementChild.cloneNode(true);
+    node.dataset.trackId = String(track.id);
     const stamp = node.querySelector(".track-card__stamp");
     const link = node.querySelector(".track-card__link");
     const art = node.querySelector(".track-card__art");
     const title = node.querySelector(".track-card__title");
     const artist = node.querySelector(".track-card__artist");
     const playButton = node.querySelector(".track-card__play-button");
+    const meterFill = node.querySelector(".track-card__meter-fill");
+    const meterLabel = node.querySelector(".track-card__meter-label");
     const playCount = node.querySelector(".track-stat__count");
     const likeButton = node.querySelector(".like-button");
     const likeIcon = node.querySelector(".like-button__icon");
     const likeCount = node.querySelector(".like-button__count");
+    const reportButton = node.querySelector(".report-button");
 
     stamp.textContent = formatStamp(track);
     link.href = track.canonicalUrl || track.sourceUrl;
@@ -129,6 +139,9 @@ function renderTimeline() {
 
     updateLikeButton(likeButton, likeIcon, track);
     likeButton.disabled = pendingLikeIds.has(track.id);
+    updateReportButton(reportButton, track);
+    reportButton.disabled = pendingReportIds.has(track.id);
+    updateTrackMeter(meterFill, meterLabel, track);
 
     playButton.addEventListener("pointerenter", () => {
       prefetchEmbed(track.embedUrl);
@@ -177,10 +190,42 @@ function renderTimeline() {
       }
     });
 
+    reportButton.addEventListener("click", async () => {
+      if (pendingReportIds.has(track.id)) {
+        return;
+      }
+
+      pendingReportIds.add(track.id);
+      reportButton.disabled = true;
+
+      try {
+        const response = await fetchJson(`/api/tracks/${track.id}/report`, {
+          method: "POST",
+          body: JSON.stringify({
+            reported: !track.reportActive,
+          }),
+        });
+
+        if (!response.ok || !response.track) {
+          setFeedback(response.message || "通報状態の更新に失敗しました。");
+          return;
+        }
+
+        syncTrack(track, response.track);
+        syncTrackInCollection(response.track);
+        updateReportButton(reportButton, track);
+        updateTrackMeter(meterFill, meterLabel, track);
+      } finally {
+        pendingReportIds.delete(track.id);
+        reportButton.disabled = false;
+      }
+    });
+
     fragment.appendChild(node);
   });
 
   timelineList.appendChild(fragment);
+  updateCountdownMeters();
 }
 
 function renderPlayerDock() {
@@ -208,6 +253,13 @@ function updateLikeButton(button, icon, track) {
   icon.textContent = isLiked ? "\u2665" : "\u2661";
 }
 
+function updateReportButton(button, track) {
+  const isReported = Boolean(track.reportActive);
+  button.dataset.active = String(isReported);
+  button.setAttribute("aria-pressed", String(isReported));
+  button.querySelector(".report-button__label").textContent = isReported ? "通報中" : "通報";
+}
+
 function syncTrack(currentTrack, nextTrack) {
   currentTrack.sourceUrl = nextTrack.sourceUrl;
   currentTrack.canonicalUrl = nextTrack.canonicalUrl;
@@ -217,6 +269,8 @@ function syncTrack(currentTrack, nextTrack) {
   currentTrack.artist = nextTrack.artist;
   currentTrack.imageUrl = nextTrack.imageUrl;
   currentTrack.playCount = nextTrack.playCount;
+  currentTrack.reportActive = nextTrack.reportActive;
+  currentTrack.reportStartedAt = nextTrack.reportStartedAt;
   currentTrack.createdAt = nextTrack.createdAt;
   currentTrack.likeCount = nextTrack.likeCount;
   currentTrack.liked = nextTrack.liked;
@@ -399,6 +453,105 @@ function buildAutoplayEmbedUrl(embedUrl) {
   const url = new URL(embedUrl);
   url.searchParams.set("autoplay", "1");
   return url.toString();
+}
+
+function startTimelineClock() {
+  if (timelineClock) {
+    return;
+  }
+
+  timelineClock = window.setInterval(() => {
+    updateCountdownMeters();
+  }, 1000);
+}
+
+function updateCountdownMeters() {
+  let hasExpiredTrack = false;
+
+  timelineList.querySelectorAll(".track-card").forEach((node) => {
+    const trackId = Number(node.dataset.trackId || 0);
+    const track = tracks.find((item) => item.id === trackId);
+
+    if (!track) {
+      return;
+    }
+
+    const meterFill = node.querySelector(".track-card__meter-fill");
+    const meterLabel = node.querySelector(".track-card__meter-label");
+    updateTrackMeter(meterFill, meterLabel, track);
+
+    const countdown = getTrackCountdown(track);
+    if (countdown.remainingMs <= 0) {
+      hasExpiredTrack = true;
+    }
+  });
+
+  if (hasExpiredTrack && !timelineRefreshInFlight) {
+    timelineRefreshInFlight = true;
+    void fetchTimeline().finally(() => {
+      timelineRefreshInFlight = false;
+    });
+  }
+}
+
+function updateTrackMeter(fill, label, track) {
+  const countdown = getTrackCountdown(track);
+  const progress = Math.min(100, Math.max(0, (countdown.remainingMs / countdown.totalMs) * 100));
+
+  fill.style.width = `${progress}%`;
+  fill.dataset.mode = countdown.mode;
+  label.textContent = buildCountdownLabel(countdown);
+}
+
+function getTrackCountdown(track) {
+  const now = Date.now();
+  const naturalDeadline = new Date(track.createdAt).getTime() + TRACK_LIFETIME_MS;
+  const reportDeadline =
+    track.reportActive && track.reportStartedAt
+      ? new Date(track.reportStartedAt).getTime() + REPORT_LIFETIME_MS
+      : Number.POSITIVE_INFINITY;
+
+  if (reportDeadline < naturalDeadline) {
+    return {
+      mode: "report",
+      totalMs: REPORT_LIFETIME_MS,
+      remainingMs: Math.max(0, reportDeadline - now),
+    };
+  }
+
+  return {
+    mode: "timeline",
+    totalMs: TRACK_LIFETIME_MS,
+    remainingMs: Math.max(0, naturalDeadline - now),
+  };
+}
+
+function buildCountdownLabel(countdown) {
+  if (countdown.remainingMs <= 0) {
+    return "まもなく消えます";
+  }
+
+  const parts = [];
+  let remainingSeconds = Math.ceil(countdown.remainingMs / 1000);
+  const hours = Math.floor(remainingSeconds / 3600);
+  remainingSeconds -= hours * 3600;
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds - minutes * 60;
+
+  if (hours > 0) {
+    parts.push(`${hours}時間`);
+  }
+
+  if (minutes > 0) {
+    parts.push(`${minutes}分`);
+  }
+
+  if (hours === 0 && seconds > 0) {
+    parts.push(`${seconds}秒`);
+  }
+
+  const prefix = countdown.mode === "report" ? "通報で消えるまで" : "24時間で消えるまで";
+  return `${prefix} 残り${parts.join(" ")}`;
 }
 
 function updateEmptyState(message) {
