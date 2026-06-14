@@ -31,6 +31,7 @@ const emptyStateMessage = emptyState.querySelector("p");
 const trackTemplate = document.querySelector("#track-template");
 const autoPlayToggle = document.querySelector("#autoplay-toggle");
 const autoPlayShuffleToggle = document.querySelector("#autoplay-shuffle-toggle");
+const autoPlaySuperLikeToggle = document.querySelector("#autoplay-super-like-toggle");
 const submitButton = form.querySelector('button[type="submit"]');
 const playerDock = document.querySelector("#player-dock");
 const playerDockArtist = document.querySelector("#player-dock-artist");
@@ -55,6 +56,7 @@ let tracks = [];
 let activeTrackId = null;
 let autoPlayMode = false;
 let autoPlayShuffleMode = false;
+let autoPlaySuperLikeOnlyMode = false;
 let autoPlayQueueIds = [];
 let sequenceTrackId = null;
 let autoPlayTimeout = null;
@@ -96,6 +98,17 @@ autoPlayShuffleToggle?.addEventListener("click", () => {
 
   startAutoPlayFromTop({
     shuffle: true,
+  });
+});
+
+autoPlaySuperLikeToggle?.addEventListener("click", () => {
+  if (autoPlayMode && autoPlaySuperLikeOnlyMode) {
+    stopAutoPlayMode();
+    return;
+  }
+
+  startAutoPlayFromTop({
+    superLikeOnly: true,
   });
 });
 
@@ -197,6 +210,7 @@ async function fetchTimeline() {
   if (!response.ok) {
     autoPlayMode = false;
     autoPlayShuffleMode = false;
+    autoPlaySuperLikeOnlyMode = false;
     autoPlayQueueIds = [];
     clearAutoPlayAdvance();
     tracks = [];
@@ -1346,19 +1360,29 @@ function setSubmitting(isSubmitting) {
 }
 
 function renderAutoPlayToggle() {
-  if (!autoPlayToggle || !autoPlayShuffleToggle) {
+  if (!autoPlayToggle || !autoPlayShuffleToggle || !autoPlaySuperLikeToggle) {
     return;
   }
 
   const isDisabled = tracks.length === 0;
+  const hasSuperLikeTracks = tracks.some((track) => normalizeStatCount(track.superLikeCount) > 0);
   autoPlayToggle.disabled = isDisabled;
   autoPlayShuffleToggle.disabled = isDisabled;
-  autoPlayToggle.dataset.active = String(autoPlayMode && !autoPlayShuffleMode);
+  autoPlaySuperLikeToggle.disabled = isDisabled || !hasSuperLikeTracks;
+  autoPlayToggle.dataset.active = String(
+    autoPlayMode && !autoPlayShuffleMode && !autoPlaySuperLikeOnlyMode,
+  );
   autoPlayShuffleToggle.dataset.active = String(autoPlayMode && autoPlayShuffleMode);
-  autoPlayToggle.setAttribute("aria-pressed", String(autoPlayMode && !autoPlayShuffleMode));
+  autoPlaySuperLikeToggle.dataset.active = String(autoPlayMode && autoPlaySuperLikeOnlyMode);
+  autoPlayToggle.setAttribute(
+    "aria-pressed",
+    String(autoPlayMode && !autoPlayShuffleMode && !autoPlaySuperLikeOnlyMode),
+  );
   autoPlayShuffleToggle.setAttribute("aria-pressed", String(autoPlayMode && autoPlayShuffleMode));
+  autoPlaySuperLikeToggle.setAttribute("aria-pressed", String(autoPlayMode && autoPlaySuperLikeOnlyMode));
   autoPlayToggle.textContent = "AUTO PLAY";
   autoPlayShuffleToggle.textContent = "AUTO PLAY (SHUFFLE)";
+  autoPlaySuperLikeToggle.textContent = "AUTO PLAY (超推し！のみ)";
 }
 
 function renderRadioControls() {
@@ -1424,7 +1448,11 @@ function startAutoPlayFromTop(options = {}) {
   }
 
   autoPlayShuffleMode = Boolean(options.shuffle);
-  autoPlayQueueIds = buildAutoPlayQueueIds(autoPlayShuffleMode);
+  autoPlaySuperLikeOnlyMode = Boolean(options.superLikeOnly);
+  autoPlayQueueIds = buildAutoPlayQueueIds({
+    shuffle: autoPlayShuffleMode,
+    superLikeOnly: autoPlaySuperLikeOnlyMode,
+  });
   autoPlayMode = true;
 
   if (usesManualSequenceMode()) {
@@ -1442,6 +1470,7 @@ function startAutoPlayFromTop(options = {}) {
     if (!firstTrack) {
       autoPlayMode = false;
       autoPlayShuffleMode = false;
+      autoPlaySuperLikeOnlyMode = false;
       return;
     }
 
@@ -1464,6 +1493,7 @@ function startAutoPlayFromTop(options = {}) {
 function stopAutoPlayMode(options = {}) {
   autoPlayMode = false;
   autoPlayShuffleMode = false;
+  autoPlaySuperLikeOnlyMode = false;
   autoPlayQueueIds = [];
   sequenceTrackId = null;
   const previousActiveTrackId = activeTrackId;
@@ -1480,8 +1510,12 @@ function stopAutoPlayMode(options = {}) {
   }
 }
 
-function buildAutoPlayQueueIds(shuffle = false) {
-  const queueIds = tracks.map((track) => track.id);
+function buildAutoPlayQueueIds(options = {}) {
+  const shuffle = Boolean(options.shuffle);
+  const superLikeOnly = Boolean(options.superLikeOnly);
+  const queueIds = tracks
+    .filter((track) => !superLikeOnly || normalizeStatCount(track.superLikeCount) > 0)
+    .map((track) => track.id);
 
   if (!shuffle) {
     return queueIds;
