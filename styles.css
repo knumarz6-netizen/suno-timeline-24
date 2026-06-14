@@ -565,6 +565,134 @@ body.radio-mode .layout .timeline {
   background: linear-gradient(180deg, rgba(244, 249, 255, 0.98), rgba(238, 245, 252, 0.96));
 }
 
+.super-like-spotlight {
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid rgba(196, 135, 47, 0.24);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 249, 241, 0.98), rgba(255, 245, 233, 0.96));
+}
+
+.super-like-spotlight__header {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.super-like-spotlight__eyebrow {
+  margin: 0;
+  color: rgba(125, 84, 32, 0.56);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.super-like-spotlight__title {
+  margin: 0;
+  font-family: "Avenir Next Condensed", "Arial Narrow", "Avenir Next", sans-serif;
+  font-size: 1.16rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.super-like-spotlight__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.super-like-spotlight__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8f6023;
+  font-size: 0.92rem;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.super-like-spotlight__toggle[hidden] {
+  display: none;
+}
+
+.super-like-spotlight-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(196, 135, 47, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.super-like-spotlight-card__title,
+.super-like-spotlight-card__artist,
+.super-like-spotlight-card__count,
+.super-like-spotlight-card__mine {
+  margin: 0;
+}
+
+.super-like-spotlight-card__title {
+  overflow: hidden;
+  font-size: 1rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.super-like-spotlight-card__artist {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 0.77rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.super-like-spotlight-card__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.super-like-spotlight-card__count {
+  color: #8f6023;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.super-like-spotlight-card__mine {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(196, 135, 47, 0.14);
+  color: #8f6023;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.super-like-spotlight-card__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8f6023;
+  font-size: 0.76rem;
+  margin-left: auto;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.track-card--spotlighted {
+  box-shadow: 0 0 0 2px rgba(196, 135, 47, 0.32), 0 14px 28px rgba(10, 20, 34, 0.08);
+}
+
 .timeline-pick__header {
   display: grid;
   gap: 4px;
@@ -887,6 +1015,10 @@ body.radio-mode .layout .timeline {
   color: var(--text-soft);
   font-size: 0.82rem;
   line-height: 1.2;
+}
+
+body.radio-mode .player-dock__artist {
+  color: #0e1723;
 }
 
 .player-dock__controls {

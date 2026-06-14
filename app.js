@@ -6,6 +6,7 @@ const REPORT_LIFETIME_MS = 60 * 60 * 1000;
 const TIMELINE_LIVE_REFRESH_MS = 5000;
 const DEFAULT_DURATION_SECONDS = 4 * 60;
 const AUTO_ADVANCE_BUFFER_MS = 2000;
+const SUPER_LIKE_SPOTLIGHT_COLLAPSED_COUNT = 6;
 const MAX_SUNO_URL_LENGTH = 2048;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const SUNO_HOSTNAMES = new Set(["suno.com", "www.suno.com"]);
@@ -22,6 +23,9 @@ const timelineStatTrackCount = document.querySelector("#timeline-stat-track-coun
 const timelineStatLikeCount = document.querySelector("#timeline-stat-like-count");
 const timelineStatPlayCount = document.querySelector("#timeline-stat-play-count");
 const timelineStatSuperLikeCount = document.querySelector("#timeline-stat-super-like-count");
+const superLikeSpotlight = document.querySelector("#super-like-spotlight");
+const superLikeSpotlightList = document.querySelector("#super-like-spotlight-list");
+const superLikeSpotlightToggle = document.querySelector("#super-like-spotlight-toggle");
 const emptyState = document.querySelector("#empty-state");
 const emptyStateMessage = emptyState.querySelector("p");
 const trackTemplate = document.querySelector("#track-template");
@@ -62,8 +66,14 @@ let timelineRefreshInFlight = false;
 let recommendation = null;
 let timelineStats = createEmptyTimelineStats();
 let currentUserSuperLikeTrackId = null;
+let isSuperLikeSpotlightExpanded = false;
 
 initializeApp();
+
+superLikeSpotlightToggle?.addEventListener("click", () => {
+  isSuperLikeSpotlightExpanded = !isSuperLikeSpotlightExpanded;
+  renderSuperLikeSpotlight();
+});
 
 startTrackButton?.addEventListener("click", () => {
   startCurrentSequenceTrack();
@@ -252,6 +262,7 @@ async function fetchTimeline() {
 
 function renderTimeline() {
   renderTimelineStats();
+  renderSuperLikeSpotlight();
   renderRecommendation();
   timelineList.textContent = "";
   emptyState.hidden = tracks.length !== 0;
@@ -496,6 +507,115 @@ function renderRecommendation() {
 
   timelinePickCard.appendChild(buildRecommendationCard(recommendation));
   timelinePick.hidden = false;
+}
+
+function renderSuperLikeSpotlight() {
+  if (!superLikeSpotlight || !superLikeSpotlightList || !superLikeSpotlightToggle) {
+    return;
+  }
+
+  superLikeSpotlightList.textContent = "";
+
+  const spotlightTracks = [...tracks]
+    .filter((track) => normalizeStatCount(track.superLikeCount) > 0)
+    .sort((left, right) => {
+      if (left.superLiked !== right.superLiked) {
+        return left.superLiked ? -1 : 1;
+      }
+
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+    });
+
+  if (spotlightTracks.length === 0) {
+    superLikeSpotlight.hidden = true;
+    superLikeSpotlightToggle.hidden = true;
+    isSuperLikeSpotlightExpanded = false;
+    return;
+  }
+
+  const hasOverflow = spotlightTracks.length > SUPER_LIKE_SPOTLIGHT_COLLAPSED_COUNT;
+  const visibleTracks =
+    hasOverflow && !isSuperLikeSpotlightExpanded
+      ? spotlightTracks.slice(0, SUPER_LIKE_SPOTLIGHT_COLLAPSED_COUNT)
+      : spotlightTracks;
+
+  const fragment = document.createDocumentFragment();
+
+  visibleTracks.forEach((track) => {
+    fragment.appendChild(buildSuperLikeSpotlightCard(track));
+  });
+
+  superLikeSpotlightList.appendChild(fragment);
+  superLikeSpotlight.hidden = false;
+
+  if (!hasOverflow) {
+    superLikeSpotlightToggle.hidden = true;
+    superLikeSpotlightToggle.setAttribute("aria-expanded", "false");
+    isSuperLikeSpotlightExpanded = false;
+    return;
+  }
+
+  const hiddenCount = spotlightTracks.length - SUPER_LIKE_SPOTLIGHT_COLLAPSED_COUNT;
+  superLikeSpotlightToggle.hidden = false;
+  superLikeSpotlightToggle.textContent = isSuperLikeSpotlightExpanded
+    ? "Show less"
+    : `+${hiddenCount} more`;
+  superLikeSpotlightToggle.setAttribute("aria-expanded", String(isSuperLikeSpotlightExpanded));
+}
+
+function buildSuperLikeSpotlightCard(track) {
+  const article = document.createElement("article");
+  article.className = "super-like-spotlight-card";
+
+  const title = document.createElement("h4");
+  title.className = "super-like-spotlight-card__title";
+  title.textContent = track.title || "Untitled";
+
+  const artist = document.createElement("p");
+  artist.className = "super-like-spotlight-card__artist";
+  artist.textContent = track.artist || "Unknown artist";
+
+  const meta = document.createElement("div");
+  meta.className = "super-like-spotlight-card__meta";
+
+  const badge = document.createElement("p");
+  badge.className = "super-like-spotlight-card__count";
+  badge.textContent = `👍 超推し！ ${normalizeStatCount(track.superLikeCount)}`;
+
+  const mine = document.createElement("p");
+  mine.className = "super-like-spotlight-card__mine";
+  mine.hidden = !track.superLiked;
+  mine.textContent = "YOUR PICK";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "super-like-spotlight-card__button";
+  button.textContent = "VIEW";
+  button.addEventListener("click", () => {
+    scrollTrackIntoView(track.id);
+  });
+
+  meta.append(badge, mine, button);
+  article.append(title, artist, meta);
+  return article;
+}
+
+function scrollTrackIntoView(trackId) {
+  const target = document.querySelector(`.track-card[data-track-id="${trackId}"]`);
+
+  if (!target) {
+    return;
+  }
+
+  target.scrollIntoView({
+    behavior: "smooth",
+    block: "center",
+  });
+
+  target.classList.add("track-card--spotlighted");
+  window.setTimeout(() => {
+    target.classList.remove("track-card--spotlighted");
+  }, 1600);
 }
 
 function buildRecommendationCard(track) {
