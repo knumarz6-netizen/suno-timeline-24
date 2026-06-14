@@ -32,6 +32,10 @@ const radioControls = document.querySelector("#radio-controls");
 const startTrackButton = document.querySelector("#start-track-button");
 const nextTrackButton = document.querySelector("#next-track-button");
 const stopRadioButton = document.querySelector("#stop-radio-button");
+const playerDockLikeButton = document.querySelector("#player-dock-like-button");
+const playerDockLikeIcon = document.querySelector("#player-dock-like-icon");
+const playerDockLikeCount = document.querySelector("#player-dock-like-count");
+const playerDockOpenLink = document.querySelector("#player-dock-open-link");
 
 const anonymousClientId = ensureAnonymousClientId();
 const pendingLikeIds = new Set();
@@ -84,6 +88,42 @@ nextTrackButton?.addEventListener("click", () => {
 
 stopRadioButton?.addEventListener("click", () => {
   stopAutoPlayMode();
+});
+
+playerDockLikeButton?.addEventListener("click", async () => {
+  const currentTrack = getPlayerDockTrack();
+
+  if (!currentTrack || pendingLikeIds.has(currentTrack.id)) {
+    return;
+  }
+
+  pendingLikeIds.add(currentTrack.id);
+  playerDockLikeButton.disabled = true;
+
+  try {
+    const response = await fetchJson(`/api/tracks/${currentTrack.id}/like`, {
+      method: "POST",
+      body: JSON.stringify({
+        liked: !currentTrack.liked,
+      }),
+    });
+
+    if (!response.ok || !response.track) {
+      setFeedback(response.message || "\u3044\u3044\u306d\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002");
+      return;
+    }
+
+    syncTrackInCollection(response.track);
+    syncRecommendationTrack(response.track);
+    updateTrackPlayCount(currentTrack.id, response.track.playCount);
+    renderPlayerDock();
+    renderTimeline();
+  } finally {
+    pendingLikeIds.delete(currentTrack.id);
+    if (playerDockLikeButton) {
+      playerDockLikeButton.disabled = false;
+    }
+  }
 });
 
 form.addEventListener("submit", async (event) => {
@@ -499,6 +539,18 @@ function renderPlayerDock(options = {}) {
   const shouldShowFrame = activeTrackId === currentTrack.id;
   playerDock.hidden = false;
   playerDockArtist.textContent = currentTrack.artist || "Unknown artist";
+
+  if (playerDockLikeButton && playerDockLikeIcon && playerDockLikeCount) {
+    updateLikeButton(playerDockLikeButton, playerDockLikeIcon, currentTrack);
+    playerDockLikeCount.textContent = String(currentTrack.likeCount ?? 0);
+    playerDockLikeButton.hidden = !autoPlayMode;
+    playerDockLikeButton.disabled = pendingLikeIds.has(currentTrack.id);
+  }
+
+  if (playerDockOpenLink) {
+    playerDockOpenLink.href = currentTrack.canonicalUrl || currentTrack.sourceUrl;
+    playerDockOpenLink.hidden = !autoPlayMode;
+  }
 
   if (playerDockFrame) {
     playerDockFrame.hidden = !shouldShowFrame;
@@ -1026,6 +1078,12 @@ function renderRadioControls() {
     startTrackButton.hidden = true;
     nextTrackButton.hidden = true;
     stopRadioButton.hidden = true;
+    if (playerDockLikeButton) {
+      playerDockLikeButton.hidden = true;
+    }
+    if (playerDockOpenLink) {
+      playerDockOpenLink.hidden = true;
+    }
     startTrackButton.disabled = true;
     nextTrackButton.disabled = true;
     stopRadioButton.disabled = true;
@@ -1049,6 +1107,14 @@ function renderRadioControls() {
   }
 
   stopRadioButton.disabled = !autoPlayMode;
+
+  if (playerDockLikeButton) {
+    playerDockLikeButton.hidden = !autoPlayMode;
+  }
+
+  if (playerDockOpenLink) {
+    playerDockOpenLink.hidden = !autoPlayMode;
+  }
 }
 
 function renderRadioMode() {

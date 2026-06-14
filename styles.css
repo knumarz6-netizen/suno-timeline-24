@@ -858,6 +858,15 @@ body.radio-mode .layout .timeline {
   border-color: var(--line-strong);
 }
 
+.player-dock__button--like,
+.player-dock__button--open {
+  border-color: rgba(61, 102, 150, 0.24);
+}
+
+.player-dock__button--open {
+  text-decoration: none;
+}
+
 .player-dock__frame {
   overflow: hidden;
   border: 1px solid var(--line);
