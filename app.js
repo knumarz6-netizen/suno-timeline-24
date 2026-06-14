@@ -16,6 +16,8 @@ const layout = document.querySelector(".layout");
 const urlInput = document.querySelector("#track-url");
 const feedback = document.querySelector("#form-feedback");
 const timelineList = document.querySelector("#timeline-list");
+const timelinePick = document.querySelector("#timeline-pick");
+const timelinePickCard = document.querySelector("#timeline-pick-card");
 const emptyState = document.querySelector("#empty-state");
 const emptyStateMessage = emptyState.querySelector("p");
 const trackTemplate = document.querySelector("#track-template");
@@ -46,6 +48,7 @@ let autoPlayAdvanceAtMs = 0;
 let timelineClock = null;
 let timelineLiveRefresh = null;
 let timelineRefreshInFlight = false;
+let recommendation = null;
 
 initializeApp();
 
@@ -126,6 +129,7 @@ async function fetchTimeline() {
     autoPlayQueueIds = [];
     clearAutoPlayAdvance();
     tracks = [];
+    recommendation = null;
     renderTimeline();
     renderPlayerDock();
     renderAutoPlayToggle();
@@ -137,11 +141,20 @@ async function fetchTimeline() {
   }
 
   const nextTracks = Array.isArray(response.tracks) ? response.tracks : [];
+  const nextRecommendation =
+    response.recommendation && typeof response.recommendation === "object"
+      ? response.recommendation
+      : null;
   const previousSignature = buildTimelineSignature(tracks);
   const nextSignature = buildTimelineSignature(nextTracks);
-  const shouldRerenderTimeline = previousSignature !== nextSignature;
+  const previousRecommendationSignature = buildRecommendationSignature(recommendation);
+  const nextRecommendationSignature = buildRecommendationSignature(nextRecommendation);
+  const shouldRerenderTimeline =
+    previousSignature !== nextSignature ||
+    previousRecommendationSignature !== nextRecommendationSignature;
 
   tracks = nextTracks;
+  recommendation = nextRecommendation;
   syncActiveTrack();
   syncSequenceTrack();
 
@@ -171,12 +184,16 @@ async function fetchTimeline() {
 }
 
 function renderTimeline() {
+  renderRecommendation();
   timelineList.textContent = "";
   emptyState.hidden = tracks.length !== 0;
 
   const fragment = document.createDocumentFragment();
+  const visibleTracks = recommendation
+    ? tracks.filter((track) => track.id !== recommendation.id)
+    : tracks;
 
-  tracks.forEach((track) => {
+  visibleTracks.forEach((track) => {
     const node = trackTemplate.content.firstElementChild.cloneNode(true);
     node.dataset.trackId = String(track.id);
     const stamp = node.querySelector(".track-card__stamp");
@@ -300,6 +317,148 @@ function renderTimeline() {
   updateCountdownMeters();
 }
 
+function renderRecommendation() {
+  if (!timelinePick || !timelinePickCard) {
+    return;
+  }
+
+  timelinePickCard.textContent = "";
+
+  if (!recommendation) {
+    timelinePick.hidden = true;
+    return;
+  }
+
+  timelinePickCard.appendChild(buildRecommendationCard(recommendation));
+  timelinePick.hidden = false;
+}
+
+function buildRecommendationCard(track) {
+  const node = trackTemplate.content.firstElementChild.cloneNode(true);
+  node.dataset.trackId = String(track.id);
+  node.classList.add("track-card--featured");
+
+  const stamp = node.querySelector(".track-card__stamp");
+  const link = node.querySelector(".track-card__link");
+  const art = node.querySelector(".track-card__art");
+  const title = node.querySelector(".track-card__title");
+  const artist = node.querySelector(".track-card__artist");
+  const playButton = node.querySelector(".track-card__play-button");
+  const meterFill = node.querySelector(".track-card__meter-fill");
+  const meterLabel = node.querySelector(".track-card__meter-label");
+  const playCount = node.querySelector(".track-stat__count");
+  const likeButton = node.querySelector(".like-button");
+  const likeIcon = node.querySelector(".like-button__icon");
+  const likeCount = node.querySelector(".like-button__count");
+  const reportButton = node.querySelector(".report-button");
+
+  stamp.textContent = formatStamp(track);
+  link.href = track.canonicalUrl || track.sourceUrl;
+
+  if (track.imageUrl) {
+    art.src = track.imageUrl;
+    art.alt = `${track.title} artwork`;
+  } else {
+    art.removeAttribute("src");
+    art.alt = "";
+  }
+
+  title.textContent = track.title || "Untitled";
+  artist.textContent = track.artist || "Unknown artist";
+  playCount.textContent = String(track.playCount ?? 0);
+  playCount.dataset.trackId = String(track.id);
+  likeCount.textContent = String(track.likeCount ?? 0);
+  renderTrackPlayButton(playButton, track.id === activeTrackId);
+
+  updateLikeButton(likeButton, likeIcon, track);
+  likeButton.disabled = pendingLikeIds.has(track.id);
+  updateReportButton(reportButton, track);
+  reportButton.disabled = pendingReportIds.has(track.id);
+  updateTrackMeter(meterFill, meterLabel, track);
+
+  playButton.addEventListener("pointerenter", () => {
+    prefetchEmbed(track.embedUrl);
+  });
+
+  playButton.addEventListener("focus", () => {
+    prefetchEmbed(track.embedUrl);
+  });
+
+  playButton.addEventListener("pointerdown", () => {
+    prefetchEmbed(track.embedUrl);
+  });
+
+  playButton.addEventListener("click", () => {
+    activateTrack(track, playCount);
+  });
+
+  likeButton.addEventListener("click", async () => {
+    if (pendingLikeIds.has(track.id)) {
+      return;
+    }
+
+    pendingLikeIds.add(track.id);
+    likeButton.disabled = true;
+
+    try {
+      const response = await fetchJson(`/api/tracks/${track.id}/like`, {
+        method: "POST",
+        body: JSON.stringify({
+          liked: !track.liked,
+        }),
+      });
+
+      if (!response.ok || !response.track) {
+        setFeedback(response.message || "\u3044\u3044\u306d\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002");
+        return;
+      }
+
+      syncTrack(track, response.track);
+      syncTrackInCollection(response.track);
+      syncRecommendationTrack(response.track);
+      likeCount.textContent = String(track.likeCount ?? 0);
+      updateLikeButton(likeButton, likeIcon, track);
+    } finally {
+      pendingLikeIds.delete(track.id);
+      likeButton.disabled = false;
+    }
+  });
+
+  reportButton.addEventListener("click", async () => {
+    if (pendingReportIds.has(track.id)) {
+      return;
+    }
+
+    pendingReportIds.add(track.id);
+    reportButton.disabled = true;
+
+    try {
+      const response = await fetchJson(`/api/tracks/${track.id}/report`, {
+        method: "POST",
+        body: JSON.stringify({
+          reported: !track.reportActive,
+        }),
+      });
+
+      if (!response.ok || !response.track) {
+        setFeedback(response.message || "\u901a\u5831\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002");
+        return;
+      }
+
+      syncTrack(track, response.track);
+      syncTrackInCollection(response.track);
+      syncRecommendationTrack(response.track);
+      updateReportButton(reportButton, track);
+      updateTrackMeter(meterFill, meterLabel, track);
+    } finally {
+      pendingReportIds.delete(track.id);
+      reportButton.disabled = false;
+    }
+  });
+
+  return node;
+}
+
 function renderTrackPlayButton(button, isActive) {
   button.dataset.active = String(isActive);
   button.setAttribute("aria-label", isActive ? "Now playing" : "Play");
@@ -346,30 +505,22 @@ function syncTrackPlaybackButtons(previousTrackId, nextTrackId) {
   const trackIds = new Set([previousTrackId, nextTrackId].filter((value) => value !== null));
 
   trackIds.forEach((trackId) => {
-    const card = timelineList.querySelector(`[data-track-id="${trackId}"]`);
+    document.querySelectorAll(`[data-track-id="${trackId}"]`).forEach((card) => {
+      const playButton = card.querySelector(".track-card__play-button");
 
-    if (!card) {
-      return;
-    }
-
-    const playButton = card.querySelector(".track-card__play-button");
-
-    if (!playButton) {
-      return;
-    }
-
-    renderTrackPlayButton(playButton, trackId === nextTrackId);
+      if (playButton) {
+        renderTrackPlayButton(playButton, trackId === nextTrackId);
+      }
+    });
   });
 }
 
 function updateTrackPlayCount(trackId, playCount) {
-  const playCountElement = timelineList.querySelector(`.track-stat__count[data-track-id="${trackId}"]`);
-
-  if (!playCountElement) {
-    return;
-  }
-
-  playCountElement.textContent = String(playCount ?? 0);
+  document
+    .querySelectorAll(`.track-stat__count[data-track-id="${trackId}"]`)
+    .forEach((playCountElement) => {
+      playCountElement.textContent = String(playCount ?? 0);
+    });
 }
 
 function updateLikeButton(button, icon, track) {
@@ -453,6 +604,35 @@ function syncTrackInCollection(nextTrack) {
   }
 
   syncTrack(existingTrack, nextTrack);
+}
+
+function syncRecommendationTrack(nextTrack) {
+  if (!recommendation || recommendation.id !== nextTrack.id) {
+    return;
+  }
+
+  syncTrack(recommendation, nextTrack);
+}
+
+function buildRecommendationSignature(track) {
+  if (!track) {
+    return "null";
+  }
+
+  return JSON.stringify([
+    track.id,
+    track.trackKey,
+    track.title,
+    track.artist,
+    track.imageUrl,
+    track.durationSeconds,
+    track.playCount,
+    track.likeCount,
+    track.liked,
+    track.reportActive,
+    track.reportStartedAt,
+    track.createdAt,
+  ]);
 }
 
 function parseSunoUrl(value) {

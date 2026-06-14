@@ -30,6 +30,9 @@ const ABUSE_HASH_SECRET = process.env.ABUSE_HASH_SECRET || "suno-timeline-local-
 const TRUST_PROXY = process.env.TRUST_PROXY === "true";
 const ADMIN_PURGE_KEY = String(process.env.ADMIN_PURGE_KEY || "").trim();
 const ADMIN_PURGE_PATH = ADMIN_PURGE_KEY ? `/admin/purge/${encodeURIComponent(ADMIN_PURGE_KEY)}` : "";
+const RECOMMENDATION_SLOT = "hourly-pick";
+const RECOMMENDATION_TIME_ZONE = "Asia/Tokyo";
+const RECOMMENDATION_MIN_PLAY_COUNT = 2;
 const ID_PATTERN =
   /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 const ANONYMOUS_CLIENT_ID_PATTERN =
@@ -46,6 +49,14 @@ const PUBLIC_FILES = new Set([
 ]);
 const GOOGLE_VERIFICATION_FILE_PATTERN = /^\/google[a-z0-9]+\.html$/i;
 const ASSETS_DIR = resolve(ROOT_DIR, "assets");
+const recommendationHourKeyFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: RECOMMENDATION_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  hourCycle: "h23",
+});
 
 const database = await createDatabase();
 
@@ -169,6 +180,13 @@ function createSqliteDatabase() {
       reason TEXT NOT NULL,
       blocked_until TEXT NOT NULL,
       created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS recommendation_state (
+      slot TEXT PRIMARY KEY,
+      hour_key TEXT NOT NULL,
+      track_id INTEGER,
+      selected_at TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS abuse_events_lookup_idx
@@ -339,9 +357,33 @@ function createSqliteDatabase() {
     DELETE FROM abuse_blocks
   `);
 
+  const deleteAllRecommendationStateStatement = db.prepare(`
+    DELETE FROM recommendation_state
+  `);
+
   const selectTrackCountStatement = db.prepare(`
     SELECT COUNT(*) AS count
     FROM tracks
+  `);
+
+  const selectRecommendationStateStatement = db.prepare(`
+    SELECT slot, hour_key, track_id, selected_at
+    FROM recommendation_state
+    WHERE slot = ?
+    LIMIT 1
+  `);
+
+  const upsertRecommendationStateStatement = db.prepare(`
+    INSERT INTO recommendation_state (
+      slot,
+      hour_key,
+      track_id,
+      selected_at
+    ) VALUES (?, ?, ?, ?)
+    ON CONFLICT(slot) DO UPDATE SET
+      hour_key = excluded.hour_key,
+      track_id = excluded.track_id,
+      selected_at = excluded.selected_at
   `);
 
   const insertAbuseEventStatement = db.prepare(`
@@ -460,6 +502,7 @@ function createSqliteDatabase() {
         deleteAllTracksStatement.run();
         deleteAllAbuseEventsStatement.run();
         deleteAllAbuseBlocksStatement.run();
+        deleteAllRecommendationStateStatement.run();
         db.exec("COMMIT");
       } catch (error) {
         db.exec("ROLLBACK");
@@ -468,6 +511,12 @@ function createSqliteDatabase() {
     },
     async getTrackCount() {
       return Number(selectTrackCountStatement.get()?.count || 0);
+    },
+    async getRecommendationState(slot) {
+      return selectRecommendationStateStatement.get(slot) || null;
+    },
+    async saveRecommendationState(slot, hourKey, trackId, selectedAt) {
+      upsertRecommendationStateStatement.run(slot, hourKey, trackId, selectedAt);
     },
     async insertAbuseEvent(subjectType, subjectKey, eventType, createdAt) {
       insertAbuseEventStatement.run(subjectType, subjectKey, eventType, createdAt);
@@ -542,6 +591,13 @@ async function createPostgresDatabase() {
       reason TEXT NOT NULL,
       blocked_until TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS recommendation_state (
+      slot TEXT PRIMARY KEY,
+      hour_key TEXT NOT NULL,
+      track_id INTEGER,
+      selected_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS abuse_events_lookup_idx
@@ -648,6 +704,13 @@ async function createPostgresDatabase() {
       ) AS liked
     FROM tracks t
     WHERE t.track_key = $2
+    LIMIT 1
+  `;
+
+  const selectRecommendationStateSql = `
+    SELECT slot, hour_key, track_id, selected_at
+    FROM recommendation_state
+    WHERE slot = $1
     LIMIT 1
   `;
 
@@ -763,6 +826,7 @@ async function createPostgresDatabase() {
         await client.query("DELETE FROM tracks");
         await client.query("DELETE FROM abuse_events");
         await client.query("DELETE FROM abuse_blocks");
+        await client.query("DELETE FROM recommendation_state");
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
@@ -777,6 +841,28 @@ async function createPostgresDatabase() {
         FROM tracks
       `);
       return Number(result.rows[0]?.count || 0);
+    },
+    async getRecommendationState(slot) {
+      const result = await pool.query(selectRecommendationStateSql, [slot]);
+      return result.rows[0] || null;
+    },
+    async saveRecommendationState(slot, hourKey, trackId, selectedAt) {
+      await pool.query(
+        `
+          INSERT INTO recommendation_state (
+            slot,
+            hour_key,
+            track_id,
+            selected_at
+          )
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (slot) DO UPDATE SET
+            hour_key = EXCLUDED.hour_key,
+            track_id = EXCLUDED.track_id,
+            selected_at = EXCLUDED.selected_at
+        `,
+        [slot, hourKey, trackId, selectedAt]
+      );
     },
     async insertAbuseEvent(subjectType, subjectKey, eventType, createdAt) {
       await pool.query(
@@ -890,9 +976,11 @@ async function createPostgresDatabase() {
 async function handleTimeline(request, response) {
   const anonymousClientId = readAnonymousClientId(request);
   const rows = await database.getTimeline(anonymousClientId);
+  const recommendation = await resolveHourlyRecommendation(rows);
 
   sendJson(response, 200, {
     tracks: rows.map(serializeTrackRow),
+    recommendation: recommendation ? serializeTrackRow(recommendation) : null,
   });
 }
 
@@ -1466,6 +1554,86 @@ function buildSongUrl(trackKey) {
 
 function buildEmbedUrl(trackKey) {
   return `https://suno.com/embed/${encodeURIComponent(trackKey)}`;
+}
+
+async function resolveHourlyRecommendation(rows) {
+  const currentHourKey = buildRecommendationHourKey(new Date());
+  const existingState = await database.getRecommendationState(RECOMMENDATION_SLOT);
+  const existingTrackId = Number(existingState?.track_id || 0);
+  const existingTrack =
+    existingTrackId > 0 ? rows.find((row) => Number(row.id) === existingTrackId) || null : null;
+
+  if (
+    existingState?.hour_key === currentHourKey &&
+    existingTrack &&
+    !Boolean(existingTrack.report_active)
+  ) {
+    return existingTrack;
+  }
+
+  const selectedTrack = pickHourlyRecommendation(rows);
+
+  await database.saveRecommendationState(
+    RECOMMENDATION_SLOT,
+    currentHourKey,
+    selectedTrack ? Number(selectedTrack.id) : null,
+    new Date().toISOString()
+  );
+
+  return selectedTrack;
+}
+
+function pickHourlyRecommendation(rows) {
+  const availableTracks = rows.filter((row) => !Boolean(row.report_active));
+
+  if (availableTracks.length === 0) {
+    return null;
+  }
+
+  const scoredTracks = availableTracks
+    .filter((row) => Number(row.play_count || 0) >= RECOMMENDATION_MIN_PLAY_COUNT)
+    .sort(compareRecommendationRows);
+
+  if (scoredTracks.length > 0) {
+    return scoredTracks[0];
+  }
+
+  return availableTracks[0] || null;
+}
+
+function compareRecommendationRows(left, right) {
+  const scoreDelta = getRecommendationScore(right) - getRecommendationScore(left);
+
+  if (Math.abs(scoreDelta) > Number.EPSILON) {
+    return scoreDelta;
+  }
+
+  const createdAtDelta = new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
+
+  if (createdAtDelta !== 0) {
+    return createdAtDelta;
+  }
+
+  return Number(left.id) - Number(right.id);
+}
+
+function getRecommendationScore(row) {
+  const likeCount = Number(row.like_count || 0);
+  const playCount = Number(row.play_count || 0);
+  return likeCount / (playCount + 3);
+}
+
+function buildRecommendationHourKey(date) {
+  const parts = recommendationHourKeyFormatter.formatToParts(date);
+  const values = Object.create(null);
+
+  parts.forEach((part) => {
+    if (part.type !== "literal") {
+      values[part.type] = part.value;
+    }
+  });
+
+  return `${values.year}${values.month}${values.day}${values.hour}`;
 }
 
 async function pruneExpiredTracks() {
