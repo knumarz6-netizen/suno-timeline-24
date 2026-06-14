@@ -918,6 +918,10 @@ body.radio-mode .player-dock__frame {
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
   }
+
+  body.has-player-dock .composer {
+    max-height: calc(100vh - 260px);
+  }
 }
 
 @media (max-width: 979px) {
