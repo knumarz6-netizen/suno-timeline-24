@@ -18,6 +18,10 @@ const feedback = document.querySelector("#form-feedback");
 const timelineList = document.querySelector("#timeline-list");
 const timelinePick = document.querySelector("#timeline-pick");
 const timelinePickCard = document.querySelector("#timeline-pick-card");
+const timelineStatTrackCount = document.querySelector("#timeline-stat-track-count");
+const timelineStatLikeCount = document.querySelector("#timeline-stat-like-count");
+const timelineStatPlayCount = document.querySelector("#timeline-stat-play-count");
+const timelineStatSuperLikeCount = document.querySelector("#timeline-stat-super-like-count");
 const emptyState = document.querySelector("#empty-state");
 const emptyStateMessage = emptyState.querySelector("p");
 const trackTemplate = document.querySelector("#track-template");
@@ -39,6 +43,7 @@ const playerDockOpenLink = document.querySelector("#player-dock-open-link");
 
 const anonymousClientId = ensureAnonymousClientId();
 const pendingLikeIds = new Set();
+const pendingSuperLikeIds = new Set();
 const pendingReportIds = new Set();
 const prefetchedEmbedUrls = new Set();
 
@@ -55,6 +60,8 @@ let timelineClock = null;
 let timelineLiveRefresh = null;
 let timelineRefreshInFlight = false;
 let recommendation = null;
+let timelineStats = createEmptyTimelineStats();
+let currentUserSuperLikeTrackId = null;
 
 initializeApp();
 
@@ -183,7 +190,9 @@ async function fetchTimeline() {
     autoPlayQueueIds = [];
     clearAutoPlayAdvance();
     tracks = [];
+    timelineStats = createEmptyTimelineStats();
     recommendation = null;
+    currentUserSuperLikeTrackId = null;
     renderTimeline();
     renderPlayerDock();
     renderAutoPlayToggle();
@@ -195,6 +204,7 @@ async function fetchTimeline() {
   }
 
   const nextTracks = Array.isArray(response.tracks) ? response.tracks : [];
+  const nextTimelineStats = normalizeTimelineStats(response.stats, nextTracks);
   const nextRecommendation =
     response.recommendation && typeof response.recommendation === "object"
       ? response.recommendation
@@ -208,7 +218,9 @@ async function fetchTimeline() {
     previousRecommendationSignature !== nextRecommendationSignature;
 
   tracks = nextTracks;
+  timelineStats = nextTimelineStats;
   recommendation = nextRecommendation;
+  currentUserSuperLikeTrackId = getCurrentUserSuperLikeTrackId(nextTracks);
   syncActiveTrack();
   syncSequenceTrack();
 
@@ -216,6 +228,7 @@ async function fetchTimeline() {
     renderTimeline();
   }
 
+  renderTimelineStats();
   renderPlayerDock();
   renderAutoPlayToggle();
   renderRadioControls();
@@ -238,6 +251,7 @@ async function fetchTimeline() {
 }
 
 function renderTimeline() {
+  renderTimelineStats();
   renderRecommendation();
   timelineList.textContent = "";
   emptyState.hidden = tracks.length !== 0;
@@ -262,6 +276,8 @@ function renderTimeline() {
     const likeButton = node.querySelector(".like-button");
     const likeIcon = node.querySelector(".like-button__icon");
     const likeCount = node.querySelector(".like-button__count");
+    const superLikeButton = node.querySelector(".super-like-button");
+    const superLikeCount = node.querySelector(".super-like-button__count");
     const reportButton = node.querySelector(".report-button");
 
     stamp.textContent = formatStamp(track);
@@ -278,10 +294,14 @@ function renderTimeline() {
     playCount.textContent = String(track.playCount ?? 0);
     playCount.dataset.trackId = String(track.id);
     likeCount.textContent = String(track.likeCount ?? 0);
+    superLikeCount.textContent = String(track.superLikeCount ?? 0);
     renderTrackPlayButton(playButton, track.id === activeTrackId);
 
     updateLikeButton(likeButton, likeIcon, track);
     likeButton.disabled = pendingLikeIds.has(track.id);
+    updateSuperLikeButton(superLikeButton, track);
+    superLikeButton.dataset.busy = String(pendingSuperLikeIds.has(track.id));
+    superLikeButton.disabled = pendingSuperLikeIds.has(track.id) || isSuperLikeLockedForTrack(track);
     updateReportButton(reportButton, track);
     reportButton.disabled = pendingReportIds.has(track.id);
     updateTrackMeter(meterFill, meterLabel, track);
@@ -333,6 +353,37 @@ function renderTimeline() {
       }
     });
 
+    superLikeButton.addEventListener("click", async () => {
+      if (pendingSuperLikeIds.size > 0 || isSuperLikeLockedForTrack(track)) {
+        return;
+      }
+
+      pendingSuperLikeIds.add(track.id);
+      superLikeButton.dataset.busy = "true";
+      superLikeButton.disabled = true;
+
+      try {
+        const response = await fetchJson(`/api/tracks/${track.id}/super-like`, {
+          method: "POST",
+          body: JSON.stringify({
+            liked: !track.superLiked,
+          }),
+        });
+
+        if (!response.ok || !response.track) {
+          setFeedback(response.message || "超推し！の更新に失敗しました。");
+          return;
+        }
+
+        await fetchTimeline();
+      } finally {
+        pendingSuperLikeIds.delete(track.id);
+        superLikeButton.dataset.busy = "false";
+        superLikeButton.disabled = pendingSuperLikeIds.has(track.id) || isSuperLikeLockedForTrack(track);
+        renderTimeline();
+      }
+    });
+
     reportButton.addEventListener("click", async () => {
       if (pendingReportIds.has(track.id)) {
         return;
@@ -371,6 +422,66 @@ function renderTimeline() {
   updateCountdownMeters();
 }
 
+function renderTimelineStats() {
+  if (
+    !timelineStatTrackCount ||
+    !timelineStatLikeCount ||
+    !timelineStatPlayCount ||
+    !timelineStatSuperLikeCount
+  ) {
+    return;
+  }
+
+  timelineStatTrackCount.textContent = formatTimelineStat(timelineStats.trackCount);
+  timelineStatLikeCount.textContent = formatTimelineStat(timelineStats.likeCount);
+  timelineStatPlayCount.textContent = formatTimelineStat(timelineStats.playCount);
+  timelineStatSuperLikeCount.textContent = formatTimelineStat(timelineStats.superLikeCount);
+}
+
+function normalizeTimelineStats(rawStats, trackList) {
+  if (rawStats && typeof rawStats === "object") {
+    return {
+      trackCount: normalizeStatCount(rawStats.trackCount),
+      likeCount: normalizeStatCount(rawStats.likeCount),
+      playCount: normalizeStatCount(rawStats.playCount),
+      superLikeCount: normalizeStatCount(rawStats.superLikeCount),
+    };
+  }
+
+  return trackList.reduce(
+    (summary, track) => {
+      summary.trackCount += 1;
+      summary.likeCount += normalizeStatCount(track.likeCount);
+      summary.playCount += normalizeStatCount(track.playCount);
+      summary.superLikeCount += normalizeStatCount(track.superLikeCount);
+      return summary;
+    },
+    createEmptyTimelineStats(),
+  );
+}
+
+function createEmptyTimelineStats() {
+  return {
+    trackCount: 0,
+    likeCount: 0,
+    playCount: 0,
+    superLikeCount: 0,
+  };
+}
+
+function normalizeStatCount(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue < 0) {
+    return 0;
+  }
+
+  return Math.floor(numericValue);
+}
+
+function formatTimelineStat(value) {
+  return normalizeStatCount(value).toLocaleString("ja-JP");
+}
+
 function renderRecommendation() {
   if (!timelinePick || !timelinePickCard) {
     return;
@@ -404,6 +515,8 @@ function buildRecommendationCard(track) {
   const likeButton = node.querySelector(".like-button");
   const likeIcon = node.querySelector(".like-button__icon");
   const likeCount = node.querySelector(".like-button__count");
+  const superLikeButton = node.querySelector(".super-like-button");
+  const superLikeCount = node.querySelector(".super-like-button__count");
   const reportButton = node.querySelector(".report-button");
 
   stamp.textContent = formatStamp(track);
@@ -422,10 +535,14 @@ function buildRecommendationCard(track) {
   playCount.textContent = String(track.playCount ?? 0);
   playCount.dataset.trackId = String(track.id);
   likeCount.textContent = String(track.likeCount ?? 0);
+  superLikeCount.textContent = String(track.superLikeCount ?? 0);
   renderTrackPlayButton(playButton, track.id === activeTrackId);
 
   updateLikeButton(likeButton, likeIcon, track);
   likeButton.disabled = pendingLikeIds.has(track.id);
+  updateSuperLikeButton(superLikeButton, track);
+  superLikeButton.dataset.busy = String(pendingSuperLikeIds.has(track.id));
+  superLikeButton.disabled = pendingSuperLikeIds.has(track.id) || isSuperLikeLockedForTrack(track);
   updateReportButton(reportButton, track);
   reportButton.disabled = pendingReportIds.has(track.id);
   updateTrackMeter(meterFill, meterLabel, track);
@@ -475,6 +592,37 @@ function buildRecommendationCard(track) {
     } finally {
       pendingLikeIds.delete(track.id);
       likeButton.disabled = false;
+    }
+  });
+
+  superLikeButton.addEventListener("click", async () => {
+    if (pendingSuperLikeIds.size > 0 || isSuperLikeLockedForTrack(track)) {
+      return;
+    }
+
+    pendingSuperLikeIds.add(track.id);
+    superLikeButton.dataset.busy = "true";
+    superLikeButton.disabled = true;
+
+    try {
+      const response = await fetchJson(`/api/tracks/${track.id}/super-like`, {
+        method: "POST",
+        body: JSON.stringify({
+          liked: !track.superLiked,
+        }),
+      });
+
+      if (!response.ok || !response.track) {
+        setFeedback(response.message || "超推し！の更新に失敗しました。");
+        return;
+      }
+
+      await fetchTimeline();
+    } finally {
+      pendingSuperLikeIds.delete(track.id);
+      superLikeButton.dataset.busy = "false";
+      superLikeButton.disabled = pendingSuperLikeIds.has(track.id) || isSuperLikeLockedForTrack(track);
+      renderTimeline();
     }
   });
 
@@ -596,6 +744,12 @@ function updateLikeButton(button, icon, track) {
   icon.textContent = isLiked ? "\u2665" : "\u2661";
 }
 
+function updateSuperLikeButton(button, track) {
+  const isSuperLiked = Boolean(track.superLiked);
+  button.dataset.superLiked = String(isSuperLiked);
+  button.setAttribute("aria-pressed", String(isSuperLiked));
+}
+
 function updateReportButton(button, track) {
   const isReported = Boolean(track.reportActive);
   button.dataset.active = String(isReported);
@@ -618,6 +772,8 @@ function syncTrack(currentTrack, nextTrack) {
   currentTrack.createdAt = nextTrack.createdAt;
   currentTrack.likeCount = nextTrack.likeCount;
   currentTrack.liked = nextTrack.liked;
+  currentTrack.superLikeCount = nextTrack.superLikeCount;
+  currentTrack.superLiked = nextTrack.superLiked;
 }
 
 function buildTimelineSignature(trackList) {
@@ -632,6 +788,8 @@ function buildTimelineSignature(trackList) {
       track.playCount,
       track.likeCount,
       track.liked,
+      track.superLikeCount,
+      track.superLiked,
       track.reportActive,
       track.reportStartedAt,
       track.createdAt,
@@ -680,6 +838,19 @@ function syncRecommendationTrack(nextTrack) {
   syncTrack(recommendation, nextTrack);
 }
 
+function getCurrentUserSuperLikeTrackId(trackList = tracks) {
+  const selectedTrack = trackList.find((track) => track.superLiked);
+  return selectedTrack ? selectedTrack.id : null;
+}
+
+function isSuperLikeLockedForTrack(track) {
+  if (!currentUserSuperLikeTrackId) {
+    return false;
+  }
+
+  return currentUserSuperLikeTrackId !== track.id;
+}
+
 function buildRecommendationSignature(track) {
   if (!track) {
     return "null";
@@ -695,6 +866,8 @@ function buildRecommendationSignature(track) {
     track.playCount,
     track.likeCount,
     track.liked,
+    track.superLikeCount,
+    track.superLiked,
     track.reportActive,
     track.reportStartedAt,
     track.createdAt,

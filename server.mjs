@@ -92,6 +92,11 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "POST" && requestUrl.pathname.match(/^\/api\/tracks\/\d+\/super-like$/)) {
+      await handleSuperLikeUpdate(request, requestUrl, response);
+      return;
+    }
+
     if (request.method === "POST" && requestUrl.pathname.match(/^\/api\/tracks\/\d+\/report$/)) {
       await handleReportUpdate(request, requestUrl, response);
       return;
@@ -165,6 +170,13 @@ function createSqliteDatabase() {
       FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS super_likes (
+      track_id INTEGER NOT NULL,
+      anonymous_client_id TEXT NOT NULL PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (track_id) REFERENCES tracks(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS abuse_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       subject_type TEXT NOT NULL,
@@ -194,6 +206,9 @@ function createSqliteDatabase() {
 
     CREATE INDEX IF NOT EXISTS abuse_blocks_lookup_idx
     ON abuse_blocks (subject_type, subject_key, blocked_until);
+
+    CREATE INDEX IF NOT EXISTS super_likes_track_idx
+    ON super_likes (track_id);
   `);
 
   ensureSqliteTracksColumn(db, "title", "TEXT NOT NULL DEFAULT ''");
@@ -224,12 +239,23 @@ function createSqliteDatabase() {
         FROM likes l
         WHERE l.track_id = t.id
       ) AS like_count,
+      (
+        SELECT COUNT(*)
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+      ) AS super_like_count,
       EXISTS(
         SELECT 1
         FROM likes l
         WHERE l.track_id = t.id
           AND l.anonymous_client_id = ?
-      ) AS liked
+      ) AS liked,
+      EXISTS(
+        SELECT 1
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+          AND sl.anonymous_client_id = ?
+      ) AS super_liked
     FROM tracks t
     ORDER BY t.created_at DESC, t.id DESC
   `);
@@ -254,12 +280,23 @@ function createSqliteDatabase() {
         FROM likes l
         WHERE l.track_id = t.id
       ) AS like_count,
+      (
+        SELECT COUNT(*)
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+      ) AS super_like_count,
       EXISTS(
         SELECT 1
         FROM likes l
         WHERE l.track_id = t.id
           AND l.anonymous_client_id = ?
-      ) AS liked
+      ) AS liked,
+      EXISTS(
+        SELECT 1
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+          AND sl.anonymous_client_id = ?
+      ) AS super_liked
     FROM tracks t
     WHERE t.id = ?
   `);
@@ -284,12 +321,23 @@ function createSqliteDatabase() {
         FROM likes l
         WHERE l.track_id = t.id
       ) AS like_count,
+      (
+        SELECT COUNT(*)
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+      ) AS super_like_count,
       EXISTS(
         SELECT 1
         FROM likes l
         WHERE l.track_id = t.id
           AND l.anonymous_client_id = ?
-      ) AS liked
+      ) AS liked,
+      EXISTS(
+        SELECT 1
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+          AND sl.anonymous_client_id = ?
+      ) AS super_liked
     FROM tracks t
     WHERE t.track_key = ?
   `);
@@ -320,6 +368,27 @@ function createSqliteDatabase() {
     DELETE FROM likes
     WHERE track_id = ?
       AND anonymous_client_id = ?
+  `);
+
+  const insertSuperLikeStatement = db.prepare(`
+    INSERT OR IGNORE INTO super_likes (
+      track_id,
+      anonymous_client_id,
+      created_at
+    ) VALUES (?, ?, ?)
+  `);
+
+  const deleteSuperLikeStatement = db.prepare(`
+    DELETE FROM super_likes
+    WHERE track_id = ?
+      AND anonymous_client_id = ?
+  `);
+
+  const selectViewerSuperLikeTrackIdStatement = db.prepare(`
+    SELECT track_id
+    FROM super_likes
+    WHERE anonymous_client_id = ?
+    LIMIT 1
   `);
 
   const incrementPlayCountStatement = db.prepare(`
@@ -458,13 +527,13 @@ function createSqliteDatabase() {
   return {
     driver: "sqlite",
     async getTimeline(anonymousClientId) {
-      return selectTimelineStatement.all(anonymousClientId);
+      return selectTimelineStatement.all(anonymousClientId, anonymousClientId);
     },
     async getTrackById(anonymousClientId, trackId) {
-      return selectTrackByIdStatement.get(anonymousClientId, trackId) || null;
+      return selectTrackByIdStatement.get(anonymousClientId, anonymousClientId, trackId) || null;
     },
     async getTrackByKey(anonymousClientId, trackKey) {
-      return selectTrackByKeyStatement.get(anonymousClientId, trackKey) || null;
+      return selectTrackByKeyStatement.get(anonymousClientId, anonymousClientId, trackKey) || null;
     },
     async insertTrack(track) {
       const result = insertTrackStatement.run(
@@ -485,6 +554,15 @@ function createSqliteDatabase() {
     },
     async removeLike(trackId, anonymousClientId) {
       deleteLikeStatement.run(trackId, anonymousClientId);
+    },
+    async getViewerSuperLikeTrackId(anonymousClientId) {
+      return Number(selectViewerSuperLikeTrackIdStatement.get(anonymousClientId)?.track_id || 0) || null;
+    },
+    async addSuperLike(trackId, anonymousClientId, createdAt) {
+      insertSuperLikeStatement.run(trackId, anonymousClientId, createdAt);
+    },
+    async removeSuperLike(trackId, anonymousClientId) {
+      deleteSuperLikeStatement.run(trackId, anonymousClientId);
     },
     async incrementPlayCount(trackId) {
       incrementPlayCountStatement.run(trackId);
@@ -576,6 +654,12 @@ async function createPostgresDatabase() {
       PRIMARY KEY (track_id, anonymous_client_id)
     );
 
+    CREATE TABLE IF NOT EXISTS super_likes (
+      track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+      anonymous_client_id TEXT NOT NULL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS abuse_events (
       id SERIAL PRIMARY KEY,
       subject_type TEXT NOT NULL,
@@ -606,6 +690,9 @@ async function createPostgresDatabase() {
     CREATE INDEX IF NOT EXISTS abuse_blocks_lookup_idx
     ON abuse_blocks (subject_type, subject_key, blocked_until);
 
+    CREATE INDEX IF NOT EXISTS super_likes_track_idx
+    ON super_likes (track_id);
+
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS artist TEXT NOT NULL DEFAULT '';
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS image_url TEXT NOT NULL DEFAULT '';
@@ -635,12 +722,23 @@ async function createPostgresDatabase() {
         FROM likes l
         WHERE l.track_id = t.id
       ) AS like_count,
+      (
+        SELECT COUNT(*)
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+      ) AS super_like_count,
       EXISTS(
         SELECT 1
         FROM likes l
         WHERE l.track_id = t.id
           AND l.anonymous_client_id = $1
-      ) AS liked
+      ) AS liked,
+      EXISTS(
+        SELECT 1
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+          AND sl.anonymous_client_id = $2
+      ) AS super_liked
     FROM tracks t
     ORDER BY t.created_at DESC, t.id DESC
   `;
@@ -665,14 +763,25 @@ async function createPostgresDatabase() {
         FROM likes l
         WHERE l.track_id = t.id
       ) AS like_count,
+      (
+        SELECT COUNT(*)
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+      ) AS super_like_count,
       EXISTS(
         SELECT 1
         FROM likes l
         WHERE l.track_id = t.id
           AND l.anonymous_client_id = $1
-      ) AS liked
+      ) AS liked,
+      EXISTS(
+        SELECT 1
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+          AND sl.anonymous_client_id = $2
+      ) AS super_liked
     FROM tracks t
-    WHERE t.id = $2
+    WHERE t.id = $3
     LIMIT 1
   `;
 
@@ -696,14 +805,25 @@ async function createPostgresDatabase() {
         FROM likes l
         WHERE l.track_id = t.id
       ) AS like_count,
+      (
+        SELECT COUNT(*)
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+      ) AS super_like_count,
       EXISTS(
         SELECT 1
         FROM likes l
         WHERE l.track_id = t.id
           AND l.anonymous_client_id = $1
-      ) AS liked
+      ) AS liked,
+      EXISTS(
+        SELECT 1
+        FROM super_likes sl
+        WHERE sl.track_id = t.id
+          AND sl.anonymous_client_id = $2
+      ) AS super_liked
     FROM tracks t
-    WHERE t.track_key = $2
+    WHERE t.track_key = $3
     LIMIT 1
   `;
 
@@ -717,15 +837,15 @@ async function createPostgresDatabase() {
   return {
     driver: "postgres",
     async getTimeline(anonymousClientId) {
-      const result = await pool.query(selectTimelineSql, [anonymousClientId]);
+      const result = await pool.query(selectTimelineSql, [anonymousClientId, anonymousClientId]);
       return result.rows;
     },
     async getTrackById(anonymousClientId, trackId) {
-      const result = await pool.query(selectTrackByIdSql, [anonymousClientId, trackId]);
+      const result = await pool.query(selectTrackByIdSql, [anonymousClientId, anonymousClientId, trackId]);
       return result.rows[0] || null;
     },
     async getTrackByKey(anonymousClientId, trackKey) {
-      const result = await pool.query(selectTrackByKeySql, [anonymousClientId, trackKey]);
+      const result = await pool.query(selectTrackByKeySql, [anonymousClientId, anonymousClientId, trackKey]);
       return result.rows[0] || null;
     },
     async insertTrack(track) {
@@ -777,6 +897,42 @@ async function createPostgresDatabase() {
       await pool.query(
         `
           DELETE FROM likes
+          WHERE track_id = $1
+            AND anonymous_client_id = $2
+        `,
+        [trackId, anonymousClientId]
+      );
+    },
+    async getViewerSuperLikeTrackId(anonymousClientId) {
+      const result = await pool.query(
+        `
+          SELECT track_id
+          FROM super_likes
+          WHERE anonymous_client_id = $1
+          LIMIT 1
+        `,
+        [anonymousClientId]
+      );
+      return Number(result.rows[0]?.track_id || 0) || null;
+    },
+    async addSuperLike(trackId, anonymousClientId, createdAt) {
+      await pool.query(
+        `
+          INSERT INTO super_likes (
+            track_id,
+            anonymous_client_id,
+            created_at
+          )
+          VALUES ($1, $2, $3)
+          ON CONFLICT (anonymous_client_id) DO NOTHING
+        `,
+        [trackId, anonymousClientId, createdAt]
+      );
+    },
+    async removeSuperLike(trackId, anonymousClientId) {
+      await pool.query(
+        `
+          DELETE FROM super_likes
           WHERE track_id = $1
             AND anonymous_client_id = $2
         `,
@@ -977,9 +1133,25 @@ async function handleTimeline(request, response) {
   const anonymousClientId = readAnonymousClientId(request);
   const rows = await database.getTimeline(anonymousClientId);
   const recommendation = await resolveHourlyRecommendation(rows);
+  const stats = rows.reduce(
+    (summary, row) => {
+      summary.trackCount += 1;
+      summary.likeCount += Number(row.like_count || 0);
+      summary.playCount += Number(row.play_count || 0);
+      summary.superLikeCount += Number(row.super_like_count || 0);
+      return summary;
+    },
+    {
+      trackCount: 0,
+      likeCount: 0,
+      playCount: 0,
+      superLikeCount: 0,
+    },
+  );
 
   sendJson(response, 200, {
     tracks: rows.map(serializeTrackRow),
+    stats,
     recommendation: recommendation ? serializeTrackRow(recommendation) : null,
   });
 }
@@ -1129,6 +1301,65 @@ async function handleLikeUpdate(request, requestUrl, response) {
     await database.addLike(trackId, anonymousClientId, new Date().toISOString());
   } else {
     await database.removeLike(trackId, anonymousClientId);
+  }
+
+  const updated = await database.getTrackById(anonymousClientId, trackId);
+
+  sendJson(response, 200, {
+    track: serializeTrackRow(updated),
+  });
+}
+
+async function handleSuperLikeUpdate(request, requestUrl, response) {
+  const anonymousClientId = requireAnonymousClientId(request, response);
+
+  if (!anonymousClientId) {
+    return;
+  }
+
+  const payload = await readJsonBody(request, response);
+
+  if (!payload || typeof payload.liked !== "boolean") {
+    sendJson(response, 400, {
+      message: "Invalid super like payload",
+    });
+    return;
+  }
+
+  const trackId = Number(requestUrl.pathname.match(/^\/api\/tracks\/(\d+)\/super-like$/)?.[1] || 0);
+
+  if (!Number.isInteger(trackId) || trackId <= 0) {
+    sendJson(response, 400, {
+      message: "Invalid track id",
+    });
+    return;
+  }
+
+  const existing = await database.getTrackById(anonymousClientId, trackId);
+
+  if (!existing) {
+    sendJson(response, 404, {
+      message: "Track not found",
+    });
+    return;
+  }
+
+  const viewerSuperLikeTrackId = await database.getViewerSuperLikeTrackId(anonymousClientId);
+
+  if (payload.liked && viewerSuperLikeTrackId && viewerSuperLikeTrackId !== trackId) {
+    sendJson(response, 409, {
+      message: "超推し！はタイムライン内で1回だけ押せます。",
+      track: serializeTrackRow(existing),
+    });
+    return;
+  }
+
+  if (payload.liked && !viewerSuperLikeTrackId) {
+    await database.addSuperLike(trackId, anonymousClientId, new Date().toISOString());
+  }
+
+  if (!payload.liked && viewerSuperLikeTrackId === trackId) {
+    await database.removeSuperLike(trackId, anonymousClientId);
   }
 
   const updated = await database.getTrackById(anonymousClientId, trackId);
@@ -1506,6 +1737,8 @@ function serializeTrackRow(row) {
     createdAt: normalizeTimestamp(row.created_at),
     likeCount: Number(row.like_count || 0),
     liked: Boolean(row.liked),
+    superLikeCount: Number(row.super_like_count || 0),
+    superLiked: Boolean(row.super_liked),
   };
 }
 
