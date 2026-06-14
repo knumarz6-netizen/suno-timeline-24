@@ -14,6 +14,9 @@
     <link rel="apple-touch-icon" href="./assets/favicon.png" />
     <link rel="preconnect" href="https://suno.com" />
     <link rel="preconnect" href="https://cdn2.suno.ai" crossorigin />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -259,6 +262,14 @@
             allow="autoplay *; fullscreen *; encrypted-media *"
             title="SUNO bottom player"
           ></iframe>
+          <div
+            id="player-dock-interaction-lock"
+            class="player-dock__interaction-lock"
+            hidden
+            aria-hidden="true"
+          >
+            <span class="player-dock__interaction-lock-label">AUTO PLAY中はプレイヤー操作不可</span>
+          </div>
         </div>
       </section>
     </div>
@@ -290,9 +301,12 @@
         </div>
 
         <div class="track-card__actions">
+          <div class="track-stat" aria-label="Play count">
+            <span class="track-stat__icon" aria-hidden="true">&#9654;</span>
+            <span class="track-stat__count">0</span>
+          </div>
           <button class="like-button" type="button" aria-pressed="false">
             <span class="like-button__icon" aria-hidden="true">&#9825;</span>
-            <span class="like-button__label">Like</span>
             <span class="like-button__count">0</span>
           </button>
           <button class="super-like-button" type="button" aria-pressed="false">
@@ -304,11 +318,6 @@
             <span class="report-button__icon" aria-hidden="true">&#9888;</span>
             <span class="report-button__label">&#36890;&#22577;</span>
           </button>
-          <div class="track-stat" aria-label="Play count">
-            <span class="track-stat__icon" aria-hidden="true">&#9654;</span>
-            <span class="track-stat__label">Play</span>
-            <span class="track-stat__count">0</span>
-          </div>
         </div>
       </article>
     </template>

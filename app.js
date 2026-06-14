@@ -37,6 +37,7 @@ const playerDock = document.querySelector("#player-dock");
 const playerDockArtist = document.querySelector("#player-dock-artist");
 const playerDockIframe = document.querySelector("#player-dock-iframe");
 const playerDockFrame = document.querySelector(".player-dock__frame");
+const playerDockInteractionLock = document.querySelector("#player-dock-interaction-lock");
 const radioControls = document.querySelector("#radio-controls");
 const startTrackButton = document.querySelector("#start-track-button");
 const nextTrackButton = document.querySelector("#next-track-button");
@@ -813,6 +814,7 @@ function renderPlayerDock(options = {}) {
     if (playerDockFrame) {
       playerDockFrame.hidden = true;
     }
+    updatePlayerDockInteractionLock(false);
     document.body.classList.remove("has-player-dock");
     renderRadioControls();
     return;
@@ -837,6 +839,7 @@ function renderPlayerDock(options = {}) {
   if (playerDockFrame) {
     playerDockFrame.hidden = !shouldShowFrame;
   }
+  updatePlayerDockInteractionLock(autoPlayMode && shouldShowFrame);
 
   if (shouldShowFrame) {
     updatePlayerDockEmbed(currentTrack.embedUrl, Boolean(options.forceRestart));
@@ -847,6 +850,15 @@ function renderPlayerDock(options = {}) {
   renderRadioControls();
 
   document.body.classList.add("has-player-dock");
+}
+
+function updatePlayerDockInteractionLock(isLocked) {
+  if (!playerDockInteractionLock || !playerDockFrame) {
+    return;
+  }
+
+  playerDockInteractionLock.hidden = !isLocked;
+  playerDockFrame.dataset.locked = String(isLocked);
 }
 
 function syncTrackPlaybackButtons(previousTrackId, nextTrackId) {

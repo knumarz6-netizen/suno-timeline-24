@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Super Like Pickup Preview</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      body {
+        padding: 24px 0 40px;
+      }
+
+      .preview-shell {
+        width: min(1080px, calc(100vw - 32px));
+        margin: 0 auto;
+      }
+
+      .preview-heading {
+        margin: 0 0 18px;
+        font-family: "Avenir Next Condensed", "Arial Narrow", "Avenir Next", sans-serif;
+        font-size: 2.2rem;
+        letter-spacing: -0.03em;
+      }
+
+      .preview-note {
+        margin: 0 0 18px;
+        color: var(--text-soft);
+      }
+
+      .super-like-spotlight {
+        padding: 16px;
+      }
+
+      .super-like-spotlight__list {
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 10px;
+      }
+
+      .super-like-spotlight-card {
+        gap: 6px;
+        padding: 12px;
+      }
+
+      .super-like-spotlight-card__title {
+        overflow: hidden;
+        font-size: 0.95rem;
+        line-height: 1.2;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .super-like-spotlight-card__artist {
+        overflow: hidden;
+        font-size: 0.77rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .super-like-spotlight-card__meta {
+        gap: 8px;
+      }
+
+      .super-like-spotlight-card__count {
+        font-size: 0.76rem;
+      }
+
+      .super-like-spotlight-card__mine {
+        font-size: 0.66rem;
+        padding: 3px 7px;
+      }
+
+      .super-like-spotlight-card__button {
+        min-height: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        font-size: 0.76rem;
+        text-decoration: underline;
+        text-underline-offset: 0.16em;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="preview-shell">
+      <h1 class="preview-heading">SUPER LIKE PICKUP Preview</h1>
+      <p class="preview-note">30曲ある場合の省スペース版です。最初は6曲だけ表示し、残りは展開します。</p>
+
+      <section
+        id="super-like-spotlight"
+        class="super-like-spotlight"
+        aria-labelledby="super-like-spotlight-title"
+      >
+        <div class="super-like-spotlight__header">
+          <p class="super-like-spotlight__eyebrow">SUPER LIKE PICKUP</p>
+          <h3 id="super-like-spotlight-title" class="super-like-spotlight__title">
+            「超推し！」されている曲
+          </h3>
+        </div>
+        <div id="super-like-spotlight-list" class="super-like-spotlight__list"></div>
+        <button
+          id="super-like-spotlight-toggle"
+          class="super-like-spotlight__toggle"
+          type="button"
+          aria-expanded="false"
+        >
+          +24 more
+        </button>
+      </section>
+    </main>
+
+    <script>
+      const tracks = [
+        { title: "test", artist: "elemayu（＠SDAIプロデュース）", count: 5, mine: true },
+        { title: "Rumor Riff", artist: "elemayu（＠SDAIプロデュース）", count: 4, mine: false },
+        { title: "StarRain", artist: "elemayu（＠SDAIプロデュース）", count: 4, mine: false },
+        { title: "Especially Blue", artist: "YumiliaDreams", count: 3, mine: false },
+        { title: "Cobalt Rumble", artist: "Dr.detarame", count: 3, mine: false },
+        { title: "旅人", artist: "isopy", count: 3, mine: false },
+        { title: "Dragged", artist: "TenJR -BACK LINE-", count: 2, mine: false },
+        { title: "夜になりきれない", artist: "LuminaNavis", count: 2, mine: false },
+        { title: "叫び", artist: "lando", count: 2, mine: false },
+        { title: "Neon Silver Bob", artist: "SaraLex", count: 2, mine: false },
+        { title: "Barcode Beat", artist: "Baumkuchen-Man", count: 2, mine: false },
+        { title: "City Light", artist: "夢現", count: 2, mine: false },
+        { title: "Breezy Ignition", artist: "新しい世界", count: 2, mine: false },
+        { title: "Your Little Light", artist: "elemayu（＠SDAIプロデュース）", count: 2, mine: false },
+        { title: "約束", artist: "elemayu（＠SDAIプロデュース）", count: 2, mine: false },
+        { title: "万物の理論", artist: "elemayu（＠SDAIプロデュース）", count: 2, mine: false },
+        { title: "Especially Rain", artist: "YumiliaDreams", count: 1, mine: false },
+        { title: "Caffeine Trance", artist: "流転", count: 1, mine: false },
+        { title: "叫ぶ夜", artist: "lando", count: 1, mine: false },
+        { title: "Paddle in Puddle", artist: "MeTa-Sun", count: 1, mine: false },
+        { title: "漂流星群", artist: "MeTa-Sun", count: 1, mine: false },
+        { title: "錆びたレール", artist: "MeTa-Sun", count: 1, mine: false },
+        { title: "一番", artist: "MeTa-Sun", count: 1, mine: false },
+        { title: "Happy Sunday", artist: "genAI", count: 1, mine: false },
+        { title: "LET'S GAMBIT!", artist: "ソコナシ~bottomless~", count: 1, mine: false },
+        { title: "春風とコスモスの約束", artist: "Kurumi", count: 1, mine: false },
+        { title: "青春アップデート", artist: "Kurumi", count: 1, mine: false },
+        { title: "J-Beyond the Rain", artist: "Schrage Musik", count: 1, mine: false },
+        { title: "ERROR CODE:ZERO", artist: "シオン🔥🐲ドラゴニュートP", count: 1, mine: false },
+        { title: "When the Rain Remembers", artist: "ぽこまる", count: 1, mine: false },
+      ];
+
+      const collapsedCount = 6;
+      const list = document.querySelector("#super-like-spotlight-list");
+      const toggle = document.querySelector("#super-like-spotlight-toggle");
+      let expanded = false;
+
+      function buildCard(track) {
+        const article = document.createElement("article");
+        article.className = "super-like-spotlight-card";
+
+        const title = document.createElement("h4");
+        title.className = "super-like-spotlight-card__title";
+        title.textContent = track.title;
+
+        const artist = document.createElement("p");
+        artist.className = "super-like-spotlight-card__artist";
+        artist.textContent = track.artist;
+
+        const meta = document.createElement("div");
+        meta.className = "super-like-spotlight-card__meta";
+
+        const count = document.createElement("p");
+        count.className = "super-like-spotlight-card__count";
+        count.textContent = `👍 超推し！ ${track.count}`;
+        meta.appendChild(count);
+
+        if (track.mine) {
+          const mine = document.createElement("p");
+          mine.className = "super-like-spotlight-card__mine";
+          mine.textContent = "YOUR PICK";
+          meta.appendChild(mine);
+        }
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "super-like-spotlight-card__button";
+        button.textContent = "VIEW";
+        meta.appendChild(button);
+
+        article.append(title, artist, meta);
+        return article;
+      }
+
+      function render() {
+        list.textContent = "";
+        const visibleTracks = expanded ? tracks : tracks.slice(0, collapsedCount);
+        visibleTracks.forEach((track) => {
+          list.appendChild(buildCard(track));
+        });
+
+        toggle.textContent = expanded ? "Show less" : `+${tracks.length - collapsedCount} more`;
+        toggle.setAttribute("aria-expanded", String(expanded));
+      }
+
+      toggle.addEventListener("click", () => {
+        expanded = !expanded;
+        render();
+      });
+
+      render();
+    </script>
+  </body>
+</html>
