@@ -913,6 +913,10 @@ body.radio-mode .player-dock__frame {
   .composer {
     position: sticky;
     top: 18px;
+    max-height: calc(100vh - 36px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
 }
 
