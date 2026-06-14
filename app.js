@@ -22,6 +22,7 @@ const emptyState = document.querySelector("#empty-state");
 const emptyStateMessage = emptyState.querySelector("p");
 const trackTemplate = document.querySelector("#track-template");
 const autoPlayToggle = document.querySelector("#autoplay-toggle");
+const autoPlayShuffleToggle = document.querySelector("#autoplay-shuffle-toggle");
 const submitButton = form.querySelector('button[type="submit"]');
 const playerDock = document.querySelector("#player-dock");
 const playerDockArtist = document.querySelector("#player-dock-artist");
@@ -40,6 +41,7 @@ const prefetchedEmbedUrls = new Set();
 let tracks = [];
 let activeTrackId = null;
 let autoPlayMode = false;
+let autoPlayShuffleMode = false;
 let autoPlayQueueIds = [];
 let sequenceTrackId = null;
 let autoPlayTimeout = null;
@@ -57,12 +59,23 @@ startTrackButton?.addEventListener("click", () => {
 });
 
 autoPlayToggle?.addEventListener("click", () => {
-  if (autoPlayMode) {
+  if (autoPlayMode && !autoPlayShuffleMode) {
     stopAutoPlayMode();
     return;
   }
 
   startAutoPlayFromTop();
+});
+
+autoPlayShuffleToggle?.addEventListener("click", () => {
+  if (autoPlayMode && autoPlayShuffleMode) {
+    stopAutoPlayMode();
+    return;
+  }
+
+  startAutoPlayFromTop({
+    shuffle: true,
+  });
 });
 
 nextTrackButton?.addEventListener("click", () => {
@@ -126,6 +139,7 @@ async function fetchTimeline() {
 
   if (!response.ok) {
     autoPlayMode = false;
+    autoPlayShuffleMode = false;
     autoPlayQueueIds = [];
     clearAutoPlayAdvance();
     tracks = [];
@@ -987,14 +1001,19 @@ function setSubmitting(isSubmitting) {
 }
 
 function renderAutoPlayToggle() {
-  if (!autoPlayToggle) {
+  if (!autoPlayToggle || !autoPlayShuffleToggle) {
     return;
   }
 
-  autoPlayToggle.disabled = tracks.length === 0;
-  autoPlayToggle.dataset.active = String(autoPlayMode);
-  autoPlayToggle.setAttribute("aria-pressed", String(autoPlayMode));
+  const isDisabled = tracks.length === 0;
+  autoPlayToggle.disabled = isDisabled;
+  autoPlayShuffleToggle.disabled = isDisabled;
+  autoPlayToggle.dataset.active = String(autoPlayMode && !autoPlayShuffleMode);
+  autoPlayShuffleToggle.dataset.active = String(autoPlayMode && autoPlayShuffleMode);
+  autoPlayToggle.setAttribute("aria-pressed", String(autoPlayMode && !autoPlayShuffleMode));
+  autoPlayShuffleToggle.setAttribute("aria-pressed", String(autoPlayMode && autoPlayShuffleMode));
   autoPlayToggle.textContent = "AUTO PLAY";
+  autoPlayShuffleToggle.textContent = "AUTO PLAY (SHUFFLE)";
 }
 
 function renderRadioControls() {
@@ -1045,7 +1064,8 @@ function startAutoPlayFromTop(options = {}) {
     return;
   }
 
-  autoPlayQueueIds = tracks.map((track) => track.id);
+  autoPlayShuffleMode = Boolean(options.shuffle);
+  autoPlayQueueIds = buildAutoPlayQueueIds(autoPlayShuffleMode);
   autoPlayMode = true;
 
   if (usesManualSequenceMode()) {
@@ -1062,6 +1082,7 @@ function startAutoPlayFromTop(options = {}) {
 
     if (!firstTrack) {
       autoPlayMode = false;
+      autoPlayShuffleMode = false;
       return;
     }
 
@@ -1083,6 +1104,7 @@ function startAutoPlayFromTop(options = {}) {
 
 function stopAutoPlayMode(options = {}) {
   autoPlayMode = false;
+  autoPlayShuffleMode = false;
   autoPlayQueueIds = [];
   sequenceTrackId = null;
   const previousActiveTrackId = activeTrackId;
@@ -1097,6 +1119,23 @@ function stopAutoPlayMode(options = {}) {
   if (!options.quiet) {
     setFeedback("連続再生モードを止めました。");
   }
+}
+
+function buildAutoPlayQueueIds(shuffle = false) {
+  const queueIds = tracks.map((track) => track.id);
+
+  if (!shuffle) {
+    return queueIds;
+  }
+
+  for (let index = queueIds.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    const current = queueIds[index];
+    queueIds[index] = queueIds[swapIndex];
+    queueIds[swapIndex] = current;
+  }
+
+  return queueIds;
 }
 
 function clearAutoPlayAdvance() {

@@ -423,6 +423,28 @@ body.has-player-dock .page-shell {
   margin-top: 4px;
 }
 
+.composer__notice {
+  padding: 16px 18px;
+  border: 1px solid rgba(181, 76, 76, 0.2);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 248, 248, 0.96), rgba(255, 242, 242, 0.94));
+}
+
+.composer__notice p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  line-height: 1.75;
+}
+
+.composer__notice-title {
+  margin-bottom: 8px;
+  color: #b54c4c;
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .timeline {
   padding: 24px;
 }
@@ -438,6 +460,8 @@ body.has-player-dock .page-shell {
 .timeline__controls {
   display: flex;
   justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .timeline__autoplay-note {
