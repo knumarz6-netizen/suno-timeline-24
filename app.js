@@ -11,6 +11,8 @@ const MAX_SUNO_URL_LENGTH = 2048;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const SUNO_HOSTNAMES = new Set(["suno.com", "www.suno.com"]);
 const SUNO_SHARE_KEY_PATTERN = /^[A-Za-z0-9_-]{6,128}$/;
+const SHARE_SITE_URL = "https://suno-timeline-24.onrender.com/";
+const SHARE_HASHTAG = "#SUNOTIMELINE24";
 
 const form = document.querySelector("#track-form");
 const layout = document.querySelector(".layout");
@@ -45,6 +47,7 @@ const stopRadioButton = document.querySelector("#stop-radio-button");
 const playerDockLikeButton = document.querySelector("#player-dock-like-button");
 const playerDockLikeIcon = document.querySelector("#player-dock-like-icon");
 const playerDockLikeCount = document.querySelector("#player-dock-like-count");
+const playerDockShareButton = document.querySelector("#player-dock-share-button");
 const playerDockOpenLink = document.querySelector("#player-dock-open-link");
 
 const anonymousClientId = ensureAnonymousClientId();
@@ -155,6 +158,16 @@ playerDockLikeButton?.addEventListener("click", async () => {
       playerDockLikeButton.disabled = false;
     }
   }
+});
+
+playerDockShareButton?.addEventListener("click", () => {
+  const currentTrack = getPlayerDockTrack();
+
+  if (!currentTrack) {
+    return;
+  }
+
+  openTrackShare(currentTrack);
 });
 
 form.addEventListener("submit", async (event) => {
@@ -836,6 +849,10 @@ function renderPlayerDock(options = {}) {
     playerDockOpenLink.hidden = !autoPlayMode;
   }
 
+  if (playerDockShareButton) {
+    playerDockShareButton.hidden = !autoPlayMode;
+  }
+
   if (playerDockFrame) {
     playerDockFrame.hidden = !shouldShowFrame;
   }
@@ -1225,6 +1242,29 @@ function buildAutoplayEmbedUrl(embedUrl) {
   return url.toString();
 }
 
+function buildTrackShareText(track) {
+  const shareUrl = track.canonicalUrl || track.sourceUrl;
+  const title = normalizeShareHandleText(track.title || "Untitled");
+  const artist = normalizeShareHandleText(track.artist || "Unknown artist");
+  return [SHARE_HASHTAG, `今聴いています：${title} / ${artist}`, shareUrl, SHARE_SITE_URL, "", "おすすめです！"].join("\n");
+}
+
+function normalizeShareHandleText(value) {
+  return String(value)
+    .trim()
+    .replaceAll(/[@＠]\s*/g, "@ ");
+}
+
+function openTrackShare(track) {
+  const shareIntentUrl = new URL("https://twitter.com/intent/tweet");
+  shareIntentUrl.searchParams.set("text", buildTrackShareText(track));
+
+  const popup = window.open(shareIntentUrl.toString(), "_blank", "noopener,noreferrer");
+  if (!popup) {
+    window.location.href = shareIntentUrl.toString();
+  }
+}
+
 function updatePlayerDockEmbed(embedUrl, forceRestart = false) {
   const nextSrc = buildAutoplayEmbedUrl(embedUrl);
 
@@ -1410,6 +1450,9 @@ function renderRadioControls() {
     if (playerDockLikeButton) {
       playerDockLikeButton.hidden = true;
     }
+    if (playerDockShareButton) {
+      playerDockShareButton.hidden = true;
+    }
     if (playerDockOpenLink) {
       playerDockOpenLink.hidden = true;
     }
@@ -1439,6 +1482,10 @@ function renderRadioControls() {
 
   if (playerDockLikeButton) {
     playerDockLikeButton.hidden = !autoPlayMode;
+  }
+
+  if (playerDockShareButton) {
+    playerDockShareButton.hidden = !autoPlayMode;
   }
 
   if (playerDockOpenLink) {

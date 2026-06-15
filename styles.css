@@ -1275,6 +1275,16 @@ body.radio-mode .player-dock {
   color: #ffffff;
 }
 
+.player-dock__button--share {
+  border-color: rgba(15, 23, 42, 0.14);
+  color: var(--text);
+}
+
+.player-dock__button--share:hover:not(:disabled) {
+  background: var(--text);
+  color: #ffffff;
+}
+
 .player-dock__button--open {
   text-decoration: none;
 }
