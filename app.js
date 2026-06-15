@@ -1258,11 +1258,11 @@ function normalizeShareHandleText(value) {
 function openTrackShare(track) {
   const shareIntentUrl = new URL("https://twitter.com/intent/tweet");
   shareIntentUrl.searchParams.set("text", buildTrackShareText(track));
-
-  const popup = window.open(shareIntentUrl.toString(), "_blank", "noopener,noreferrer");
-  if (!popup) {
-    window.location.href = shareIntentUrl.toString();
-  }
+  const shareLink = document.createElement("a");
+  shareLink.href = shareIntentUrl.toString();
+  shareLink.target = "_blank";
+  shareLink.rel = "noopener noreferrer";
+  shareLink.click();
 }
 
 function updatePlayerDockEmbed(embedUrl, forceRestart = false) {
