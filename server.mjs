@@ -152,6 +152,7 @@ function createSqliteDatabase() {
       canonical_url TEXT NOT NULL,
       embed_url TEXT NOT NULL,
       track_key TEXT NOT NULL UNIQUE,
+      anonymous_client_id TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL DEFAULT '',
       artist TEXT NOT NULL DEFAULT '',
       image_url TEXT NOT NULL DEFAULT '',
@@ -218,6 +219,7 @@ function createSqliteDatabase() {
   ensureSqliteTracksColumn(db, "play_count", "INTEGER NOT NULL DEFAULT 0");
   ensureSqliteTracksColumn(db, "report_active", "INTEGER NOT NULL DEFAULT 0");
   ensureSqliteTracksColumn(db, "report_started_at", "TEXT");
+  ensureSqliteTracksColumn(db, "anonymous_client_id", "TEXT NOT NULL DEFAULT ''");
 
   const selectTimelineStatement = db.prepare(`
     SELECT
@@ -348,12 +350,20 @@ function createSqliteDatabase() {
       canonical_url,
       embed_url,
       track_key,
+      anonymous_client_id,
       title,
       artist,
       image_url,
       duration_seconds,
       created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const selectLatestTrackStatement = db.prepare(`
+    SELECT id, anonymous_client_id, track_key, created_at
+    FROM tracks
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
   `);
 
   const insertLikeStatement = db.prepare(`
@@ -541,6 +551,7 @@ function createSqliteDatabase() {
         track.canonicalUrl,
         track.embedUrl,
         track.trackKey,
+        track.anonymousClientId,
         track.title,
         track.artist,
         track.imageUrl,
@@ -548,6 +559,9 @@ function createSqliteDatabase() {
         track.createdAt
       );
       return result.changes > 0;
+    },
+    async getLatestTrack() {
+      return selectLatestTrackStatement.get() || null;
     },
     async addLike(trackId, anonymousClientId, createdAt) {
       insertLikeStatement.run(trackId, anonymousClientId, createdAt);
@@ -637,6 +651,7 @@ async function createPostgresDatabase() {
       canonical_url TEXT NOT NULL,
       embed_url TEXT NOT NULL,
       track_key TEXT NOT NULL UNIQUE,
+      anonymous_client_id TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL DEFAULT '',
       artist TEXT NOT NULL DEFAULT '',
       image_url TEXT NOT NULL DEFAULT '',
@@ -700,6 +715,7 @@ async function createPostgresDatabase() {
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS play_count INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS report_active BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE tracks ADD COLUMN IF NOT EXISTS report_started_at TIMESTAMPTZ;
+    ALTER TABLE tracks ADD COLUMN IF NOT EXISTS anonymous_client_id TEXT NOT NULL DEFAULT '';
   `);
 
   const selectTimelineSql = `
@@ -827,6 +843,13 @@ async function createPostgresDatabase() {
     LIMIT 1
   `;
 
+  const selectLatestTrackSql = `
+    SELECT id, anonymous_client_id, track_key, created_at
+    FROM tracks
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `;
+
   const selectRecommendationStateSql = `
     SELECT slot, hour_key, track_id, selected_at
     FROM recommendation_state
@@ -848,6 +871,10 @@ async function createPostgresDatabase() {
       const result = await pool.query(selectTrackByKeySql, [anonymousClientId, anonymousClientId, trackKey]);
       return result.rows[0] || null;
     },
+    async getLatestTrack() {
+      const result = await pool.query(selectLatestTrackSql);
+      return result.rows[0] || null;
+    },
     async insertTrack(track) {
       const result = await pool.query(
         `
@@ -856,13 +883,14 @@ async function createPostgresDatabase() {
             canonical_url,
             embed_url,
             track_key,
+            anonymous_client_id,
             title,
             artist,
             image_url,
             duration_seconds,
             created_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           ON CONFLICT (track_key) DO NOTHING
         `,
         [
@@ -870,6 +898,7 @@ async function createPostgresDatabase() {
           track.canonicalUrl,
           track.embedUrl,
           track.trackKey,
+          track.anonymousClientId,
           track.title,
           track.artist,
           track.imageUrl,
@@ -1133,6 +1162,7 @@ async function handleTimeline(request, response) {
   const anonymousClientId = readAnonymousClientId(request);
   const rows = await database.getTimeline(anonymousClientId);
   const recommendation = await resolveHourlyRecommendation(rows);
+  const latestTrack = await database.getLatestTrack();
   const stats = rows.reduce(
     (summary, row) => {
       summary.trackCount += 1;
@@ -1152,6 +1182,11 @@ async function handleTimeline(request, response) {
   sendJson(response, 200, {
     tracks: rows.map(serializeTrackRow),
     stats,
+    latestPostByCurrentUser: Boolean(
+      anonymousClientId &&
+      latestTrack?.anonymous_client_id &&
+      latestTrack.anonymous_client_id === anonymousClientId
+    ),
     recommendation: recommendation ? serializeTrackRow(recommendation) : null,
   });
 }
@@ -1234,14 +1269,32 @@ async function handleTrackCreate(request, response) {
   try {
     const resolved = await resolveTrack(validation.sourceUrl);
     const createdAt = now.toISOString();
+    const existingTrack = await database.getTrackByKey(anonymousClientId, resolved.trackKey);
 
-    await recordPostAttempt(moderationContext.subjects, createdAt);
+    if (existingTrack) {
+      sendJson(response, 200, {
+        wasCreated: false,
+        track: serializeTrackRow(existingTrack),
+      });
+      return;
+    }
+
+    const latestTrack = await database.getLatestTrack();
+
+    if (latestTrack?.anonymous_client_id === anonymousClientId) {
+      sendJson(response, 409, {
+        message: "同じ人の連続投稿はできません。ほかの人の投稿のあとにもう一度お試しください。",
+        reason: "consecutive_post_not_allowed",
+      });
+      return;
+    }
 
     const wasCreated = await database.insertTrack({
       sourceUrl: validation.sourceUrl,
       canonicalUrl: resolved.sourceUrl,
       embedUrl: resolved.embedUrl,
       trackKey: resolved.trackKey,
+      anonymousClientId,
       title: resolved.title,
       artist: resolved.artist,
       imageUrl: resolved.imageUrl,
@@ -1249,11 +1302,15 @@ async function handleTrackCreate(request, response) {
       createdAt,
     });
 
+    if (wasCreated) {
+      await recordPostAttempt(moderationContext.subjects, createdAt);
+    }
+
     const row = await database.getTrackByKey(anonymousClientId, resolved.trackKey);
 
     sendJson(response, 200, {
       wasCreated,
-      track: serializeTrackRow(row),
+      track: row ? serializeTrackRow(row) : null,
     });
   } catch (error) {
     console.error("Track create failed", error);

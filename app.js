@@ -7,6 +7,8 @@ const TIMELINE_LIVE_REFRESH_MS = 5000;
 const DEFAULT_DURATION_SECONDS = 4 * 60;
 const AUTO_ADVANCE_BUFFER_MS = 2000;
 const SUPER_LIKE_SPOTLIGHT_COLLAPSED_COUNT = 6;
+const POST_UNLOCK_REQUIRED_MS = 30 * 1000;
+const POST_UNLOCK_STORAGE_KEY = "suno-timeline-post-unlock-v1";
 const MAX_SUNO_URL_LENGTH = 2048;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const SUNO_HOSTNAMES = new Set(["suno.com", "www.suno.com"]);
@@ -35,6 +37,13 @@ const autoPlayToggle = document.querySelector("#autoplay-toggle");
 const autoPlayShuffleToggle = document.querySelector("#autoplay-shuffle-toggle");
 const autoPlaySuperLikeToggle = document.querySelector("#autoplay-super-like-toggle");
 const submitButton = form.querySelector('button[type="submit"]');
+const submitButtonDefaultLabel = submitButton?.textContent.trim() || "投稿する";
+const composerUnlockStatus = document.querySelector("#composer-unlock-status");
+const composerUnlockTime = document.querySelector("#composer-unlock-time");
+const composerUnlockFill = document.querySelector("#composer-unlock-fill");
+const composerUnlockTimeLock = document.querySelector("#composer-unlock-time-lock");
+const composerUnlockPlayLock = document.querySelector("#composer-unlock-play-lock");
+const composerUnlockSequenceLock = document.querySelector("#composer-unlock-sequence-lock");
 const playerDock = document.querySelector("#player-dock");
 const playerDockArtist = document.querySelector("#player-dock-artist");
 const playerDockIframe = document.querySelector("#player-dock-iframe");
@@ -73,6 +82,9 @@ let recommendation = null;
 let timelineStats = createEmptyTimelineStats();
 let currentUserSuperLikeTrackId = null;
 let isSuperLikeSpotlightExpanded = false;
+let isSubmittingTrack = false;
+let latestPostByCurrentUser = false;
+let postUnlockState = loadPostUnlockState();
 
 initializeApp();
 
@@ -173,6 +185,12 @@ playerDockShareButton?.addEventListener("click", () => {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
+  if (!isPostUnlockAvailable()) {
+    setFeedback("投稿後は、次の投稿まで30秒お待ちください。");
+    renderComposerUnlock();
+    return;
+  }
+
   const rawUrl = urlInput.value.trim();
   const parsed = parseSunoUrl(rawUrl);
 
@@ -198,6 +216,11 @@ form.addEventListener("submit", async (event) => {
     }
 
     await fetchTimeline();
+
+    if (response.wasCreated) {
+      resetPostUnlockState();
+    }
+
     form.reset();
     urlInput.focus();
     setFeedback(
@@ -211,6 +234,7 @@ form.addEventListener("submit", async (event) => {
 });
 
 async function initializeApp() {
+  initializePostUnlock();
   startTimelineClock();
   startLiveTimelineRefresh();
   updateEmptyState("\u66f2\u3092\u8aad\u307f\u8fbc\u3093\u3067\u3044\u307e\u3059\u3002");
@@ -230,6 +254,7 @@ async function fetchTimeline() {
     tracks = [];
     timelineStats = createEmptyTimelineStats();
     recommendation = null;
+    latestPostByCurrentUser = false;
     currentUserSuperLikeTrackId = null;
     renderTimeline();
     renderPlayerDock();
@@ -258,6 +283,7 @@ async function fetchTimeline() {
   tracks = nextTracks;
   timelineStats = nextTimelineStats;
   recommendation = nextRecommendation;
+  latestPostByCurrentUser = Boolean(response.latestPostByCurrentUser);
   currentUserSuperLikeTrackId = getCurrentUserSuperLikeTrackId(nextTracks);
   syncActiveTrack();
   syncSequenceTrack();
@@ -358,6 +384,7 @@ function renderTimeline() {
     });
 
     playButton.addEventListener("click", () => {
+      markPostUnlockPlayback();
       activateTrack(track, playCount);
     });
 
@@ -708,6 +735,7 @@ function buildRecommendationCard(track) {
   });
 
   playButton.addEventListener("click", () => {
+    markPostUnlockPlayback();
     activateTrack(track, playCount);
   });
 
@@ -830,6 +858,7 @@ function renderPlayerDock(options = {}) {
     updatePlayerDockInteractionLock(false);
     document.body.classList.remove("has-player-dock");
     renderRadioControls();
+    renderComposerUnlock();
     return;
   }
 
@@ -867,6 +896,7 @@ function renderPlayerDock(options = {}) {
   renderRadioControls();
 
   document.body.classList.add("has-player-dock");
+  renderComposerUnlock();
 }
 
 function updatePlayerDockInteractionLock(isLocked) {
@@ -967,6 +997,8 @@ function syncActiveTrack() {
 
   activeTrackId = null;
   clearAutoPlayAdvance();
+  syncPostUnlockProgress();
+  renderComposerUnlock();
 }
 
 function syncSequenceTrack() {
@@ -1289,6 +1321,8 @@ function startTimelineClock() {
   }
 
   timelineClock = window.setInterval(() => {
+    syncPostUnlockProgress();
+    renderComposerUnlock();
     updateCountdownMeters();
   }, 1000);
 }
@@ -1408,7 +1442,526 @@ function setFeedback(message) {
 }
 
 function setSubmitting(isSubmitting) {
-  submitButton.disabled = isSubmitting;
+  isSubmittingTrack = isSubmitting;
+  renderComposerUnlock();
+}
+
+function initializePostUnlockLegacy() {
+  renderComposerUnlock();
+}
+
+function loadPostUnlockStateLegacy() {
+  try {
+    const raw = window.localStorage.getItem(POST_UNLOCK_STORAGE_KEY);
+
+    if (!raw) {
+      return {
+        unlocked: false,
+        cooldownStartedAt: null,
+      };
+    }
+
+    const parsed = JSON.parse(raw);
+    const cooldownStartedAt =
+      Number.isFinite(Number(parsed?.cooldownStartedAt)) && Number(parsed?.cooldownStartedAt) > 0
+        ? Number(parsed.cooldownStartedAt)
+        : null;
+    const listenedMs = Math.min(
+      POST_UNLOCK_REQUIRED_MS,
+      Math.max(0, Number(parsed?.listenedMs) || 0),
+    );
+    const unlocked =
+      Boolean(parsed?.unlocked) ||
+      listenedMs >= POST_UNLOCK_REQUIRED_MS ||
+      (!cooldownStartedAt && listenedMs === 0);
+
+    return {
+      unlocked,
+      cooldownStartedAt:
+        unlocked
+          ? null
+          : cooldownStartedAt ?? (listenedMs > 0 ? Date.now() - listenedMs : null),
+    };
+  } catch {
+    return {
+      unlocked: false,
+      cooldownStartedAt: null,
+    };
+  }
+}
+
+function savePostUnlockState() {
+  try {
+    window.localStorage.setItem(POST_UNLOCK_STORAGE_KEY, JSON.stringify(postUnlockState));
+  } catch {
+    // Ignore storage errors and keep the gate working in-memory.
+  }
+}
+
+function resetPostUnlockStateLegacy() {
+  postUnlockState = {
+    unlocked: false,
+    cooldownStartedAt: Date.now(),
+  };
+  savePostUnlockState();
+}
+
+function isPostUnlockRequired() {
+  return tracks.length > 0;
+}
+
+function isPostUnlockListeningLegacy() {
+  return !postUnlockState.unlocked && postUnlockState.cooldownStartedAt !== null;
+}
+
+function isPostUnlockAvailable() {
+  return (
+    !isPostUnlockRequired() ||
+    (postUnlockState.unlocked && postUnlockState.playbackUnlocked && !latestPostByCurrentUser)
+  );
+}
+
+function syncPostUnlockProgressLegacy(now = Date.now()) {
+  if (!isPostUnlockRequired()) {
+    return;
+  }
+
+  if (postUnlockState.unlocked || !postUnlockState.cooldownStartedAt) {
+    return;
+  }
+
+  postUnlockState.listenedMs = Math.min(
+    POST_UNLOCK_REQUIRED_MS,
+    Math.max(0, now - postUnlockState.cooldownStartedAt),
+  );
+
+  if (postUnlockState.listenedMs >= POST_UNLOCK_REQUIRED_MS) {
+    postUnlockState.unlocked = true;
+    postUnlockState.listenedMs = POST_UNLOCK_REQUIRED_MS;
+    postUnlockState.cooldownStartedAt = null;
+    setFeedback("30秒経ったので、次の投稿ができます。");
+  }
+
+  savePostUnlockState();
+}
+
+function renderComposerUnlockLegacy() {
+  const listenedMs = Math.min(POST_UNLOCK_REQUIRED_MS, postUnlockState.listenedMs);
+  const listenedSeconds = Math.floor(listenedMs / 1000);
+  const remainingSeconds = Math.max(0, Math.ceil((POST_UNLOCK_REQUIRED_MS - listenedMs) / 1000));
+  const progressRatio = listenedMs / POST_UNLOCK_REQUIRED_MS;
+  const isListening = isPostUnlockListening();
+  const requiresUnlock = isPostUnlockRequired();
+
+  if (composerUnlockFill) {
+    composerUnlockFill.style.width = `${(requiresUnlock ? progressRatio : 1) * 100}%`;
+  }
+
+  if (composerUnlockStatus) {
+    if (!requiresUnlock) {
+      composerUnlockStatus.textContent = "タイムラインに曲がないので今は投稿できます";
+    } else if (postUnlockState.unlocked) {
+      composerUnlockStatus.textContent = "次の投稿ができます";
+    } else if (isListening) {
+      composerUnlockStatus.textContent = `待機中です。あと${remainingSeconds}秒で次の投稿ができます`;
+    } else if (activeTrackId !== null && document.hidden) {
+      composerUnlockStatus.textContent = "このタブを表示すると待機カウントが進みます";
+    } else {
+      composerUnlockStatus.textContent = "投稿後は30秒待つと次の投稿ができます";
+    }
+  }
+
+  if (composerUnlockTime) {
+    composerUnlockTime.textContent = requiresUnlock
+      ? `${Math.min(30, listenedSeconds)} / 30秒`
+      : "視聴待ちなし";
+  }
+
+  updateSubmitButtonState();
+}
+
+function updateSubmitButtonStateLegacy() {
+  if (!submitButton) {
+    return;
+  }
+
+  const locked = !isPostUnlockAvailable();
+  const remainingSeconds = Math.max(
+    0,
+    Math.ceil((POST_UNLOCK_REQUIRED_MS - postUnlockState.listenedMs) / 1000),
+  );
+
+  submitButton.disabled = isSubmittingTrack || locked;
+  submitButton.dataset.submitting = String(isSubmittingTrack);
+  submitButton.dataset.locked = String(locked);
+
+  if (isSubmittingTrack) {
+    submitButton.textContent = "投稿中...";
+    return;
+  }
+
+  if (locked) {
+    submitButton.textContent = isPostUnlockListening()
+      ? `あと ${remainingSeconds}秒`
+      : "30秒待つと次を投稿できます";
+    return;
+  }
+
+  submitButton.textContent = submitButtonDefaultLabel;
+}
+
+function initializePostUnlock() {
+  renderComposerUnlock();
+}
+
+function loadPostUnlockState() {
+  try {
+    const raw = window.localStorage.getItem(POST_UNLOCK_STORAGE_KEY);
+
+    if (!raw) {
+      return {
+        unlocked: true,
+        playbackUnlocked: true,
+        cooldownStartedAt: null,
+        listenedMs: POST_UNLOCK_REQUIRED_MS,
+      };
+    }
+
+    const parsed = JSON.parse(raw);
+    const cooldownStartedAt =
+      Number.isFinite(Number(parsed?.cooldownStartedAt)) && Number(parsed?.cooldownStartedAt) > 0
+        ? Number(parsed.cooldownStartedAt)
+        : null;
+    const listenedMs = Math.min(
+      POST_UNLOCK_REQUIRED_MS,
+      Math.max(0, Number(parsed?.listenedMs) || 0),
+    );
+    const unlocked = Boolean(parsed?.unlocked) || listenedMs >= POST_UNLOCK_REQUIRED_MS;
+    const playbackUnlocked = parsed?.playbackUnlocked !== false;
+
+    return {
+      unlocked,
+      playbackUnlocked,
+      cooldownStartedAt:
+        unlocked
+          ? null
+          : cooldownStartedAt ?? (listenedMs > 0 ? Date.now() - listenedMs : null),
+      listenedMs: unlocked
+        ? POST_UNLOCK_REQUIRED_MS
+        : cooldownStartedAt
+          ? Math.min(POST_UNLOCK_REQUIRED_MS, Math.max(0, Date.now() - cooldownStartedAt))
+          : listenedMs,
+    };
+  } catch {
+    return {
+      unlocked: true,
+      playbackUnlocked: true,
+      cooldownStartedAt: null,
+      listenedMs: POST_UNLOCK_REQUIRED_MS,
+    };
+  }
+}
+
+function resetPostUnlockState() {
+  postUnlockState = {
+    unlocked: false,
+    playbackUnlocked: false,
+    cooldownStartedAt: Date.now(),
+    listenedMs: 0,
+  };
+  savePostUnlockState();
+}
+
+function isPostUnlockListening() {
+  return !postUnlockState.unlocked && postUnlockState.cooldownStartedAt !== null;
+}
+
+function markPostUnlockPlayback() {
+  if (!isPostUnlockRequired() || postUnlockState.playbackUnlocked) {
+    return;
+  }
+
+  postUnlockState.playbackUnlocked = true;
+  savePostUnlockState();
+  renderComposerUnlock();
+}
+
+function syncPostUnlockProgressOld(now = Date.now()) {
+  if (!isPostUnlockRequired()) {
+    postUnlockState.listenedMs = 0;
+    postUnlockState.cooldownStartedAt = null;
+    return;
+  }
+
+  if (postUnlockState.unlocked || !postUnlockState.cooldownStartedAt) {
+    return;
+  }
+
+  postUnlockState.listenedMs = Math.min(
+    POST_UNLOCK_REQUIRED_MS,
+    Math.max(0, now - postUnlockState.cooldownStartedAt),
+  );
+
+  if (postUnlockState.listenedMs >= POST_UNLOCK_REQUIRED_MS) {
+    postUnlockState.unlocked = true;
+    postUnlockState.cooldownStartedAt = null;
+    postUnlockState.listenedMs = POST_UNLOCK_REQUIRED_MS;
+    setFeedback("30秒経ったので、次の投稿ができます。");
+  }
+
+  savePostUnlockState();
+}
+
+function syncPostUnlockProgress(now = Date.now()) {
+  if (!isPostUnlockRequired()) {
+    postUnlockState.unlocked = true;
+    postUnlockState.playbackUnlocked = true;
+    postUnlockState.listenedMs = POST_UNLOCK_REQUIRED_MS;
+    postUnlockState.cooldownStartedAt = null;
+    return;
+  }
+
+  if (postUnlockState.unlocked || !postUnlockState.cooldownStartedAt) {
+    return;
+  }
+
+  postUnlockState.listenedMs = Math.min(
+    POST_UNLOCK_REQUIRED_MS,
+    Math.max(0, now - postUnlockState.cooldownStartedAt),
+  );
+
+  if (postUnlockState.listenedMs >= POST_UNLOCK_REQUIRED_MS) {
+    postUnlockState.unlocked = true;
+    postUnlockState.cooldownStartedAt = null;
+    postUnlockState.listenedMs = POST_UNLOCK_REQUIRED_MS;
+    setFeedback(
+      postUnlockState.playbackUnlocked
+        ? "30秒経ったので、次の投稿ができます。"
+        : "30秒経ちました。タイムラインの再生ボタンを押すと投稿できます。"
+    );
+  }
+
+  savePostUnlockState();
+}
+
+function renderComposerUnlockOld() {
+  const listenedMs = Math.min(POST_UNLOCK_REQUIRED_MS, Number(postUnlockState.listenedMs) || 0);
+  const listenedSeconds = Math.floor(listenedMs / 1000);
+  const remainingSeconds = Math.max(0, Math.ceil((POST_UNLOCK_REQUIRED_MS - listenedMs) / 1000));
+  const progressRatio = listenedMs / POST_UNLOCK_REQUIRED_MS;
+  const requiresUnlock = isPostUnlockRequired();
+  const timeUnlocked = !requiresUnlock || postUnlockState.unlocked;
+  const playbackUnlocked = !requiresUnlock || Boolean(postUnlockState.playbackUnlocked);
+
+  if (composerUnlockFill) {
+    composerUnlockFill.style.width = `${(requiresUnlock ? progressRatio : 1) * 100}%`;
+  }
+
+  if (composerUnlockTimeLock) {
+    composerUnlockTimeLock.dataset.unlocked = String(timeUnlocked);
+    composerUnlockTimeLock.textContent = timeUnlocked ? "🔓" : "🔒";
+  }
+
+  if (composerUnlockPlayLock) {
+    composerUnlockPlayLock.dataset.unlocked = String(playbackUnlocked);
+    composerUnlockPlayLock.textContent = playbackUnlocked ? "🔓" : "🔒";
+  }
+
+  if (composerUnlockStatus) {
+    if (!requiresUnlock) {
+      composerUnlockStatus.textContent = "タイムラインに曲がないので今は投稿できます";
+    } else if (postUnlockState.unlocked) {
+      composerUnlockStatus.textContent = "次の投稿ができます";
+    } else {
+      composerUnlockStatus.textContent = `待機中です。あと${remainingSeconds}秒で次の投稿ができます`;
+    }
+  }
+
+  if (composerUnlockTime) {
+    composerUnlockTime.textContent = requiresUnlock
+      ? `${Math.min(30, listenedSeconds)} / 30秒`
+      : "待機なし";
+  }
+
+  if (composerUnlockTimeLock) {
+    composerUnlockTimeLock.textContent = timeUnlocked ? "\uD83D\uDD13" : "\uD83D\uDD12";
+  }
+
+  if (composerUnlockPlayLock) {
+    composerUnlockPlayLock.textContent = playbackUnlocked ? "\uD83D\uDD13" : "\uD83D\uDD12";
+  }
+
+  if (composerUnlockStatus) {
+    if (!requiresUnlock) {
+      composerUnlockStatus.textContent = "タイムラインに曲がないので今は投稿できます";
+    } else if (timeUnlocked && playbackUnlocked) {
+      composerUnlockStatus.textContent = "次の投稿ができます";
+    } else if (!timeUnlocked && !playbackUnlocked) {
+      composerUnlockStatus.textContent = `あと${remainingSeconds}秒待って、タイムラインの再生ボタンを押してください`;
+    } else if (!timeUnlocked) {
+      composerUnlockStatus.textContent = `待機中です。あと${remainingSeconds}秒で次の投稿ができます`;
+    } else {
+      composerUnlockStatus.textContent = "タイムラインの再生ボタンを押すと投稿できます";
+    }
+  }
+
+  if (composerUnlockTime) {
+    composerUnlockTime.textContent = requiresUnlock
+      ? `${Math.min(30, listenedSeconds)} / 30秒`
+      : "待機なし";
+  }
+
+  updateSubmitButtonState();
+}
+
+function updateSubmitButtonStateOld() {
+  if (!submitButton) {
+    return;
+  }
+
+  const locked = !isPostUnlockAvailable();
+  const remainingSeconds = Math.max(
+    0,
+    Math.ceil((POST_UNLOCK_REQUIRED_MS - (Number(postUnlockState.listenedMs) || 0)) / 1000),
+  );
+
+  submitButton.disabled = isSubmittingTrack || locked;
+  submitButton.dataset.submitting = String(isSubmittingTrack);
+  submitButton.dataset.locked = String(locked);
+
+  if (isSubmittingTrack) {
+    submitButton.textContent = "投稿中...";
+    return;
+  }
+
+  if (locked) {
+    submitButton.textContent = `あと ${remainingSeconds}秒`;
+    return;
+  }
+
+  submitButton.textContent = submitButtonDefaultLabel;
+}
+
+function updateSubmitButtonStateOld2() {
+  if (!submitButton) {
+    return;
+  }
+
+  const locked = !isPostUnlockAvailable();
+  const remainingSeconds = Math.max(
+    0,
+    Math.ceil((POST_UNLOCK_REQUIRED_MS - (Number(postUnlockState.listenedMs) || 0)) / 1000),
+  );
+
+  submitButton.disabled = isSubmittingTrack || locked;
+  submitButton.dataset.submitting = String(isSubmittingTrack);
+  submitButton.dataset.locked = String(locked);
+
+  if (isSubmittingTrack) {
+    submitButton.textContent = "投稿中...";
+    return;
+  }
+
+  if (locked) {
+    if (!postUnlockState.unlocked && !postUnlockState.playbackUnlocked) {
+      submitButton.textContent = `あと ${remainingSeconds}秒 + 再生`;
+    } else if (!postUnlockState.unlocked) {
+      submitButton.textContent = `あと ${remainingSeconds}秒`;
+    } else {
+      submitButton.textContent = "再生で開錠";
+    }
+    return;
+  }
+
+  submitButton.textContent = submitButtonDefaultLabel;
+}
+
+function renderComposerUnlock() {
+  const listenedMs = Math.min(POST_UNLOCK_REQUIRED_MS, Number(postUnlockState.listenedMs) || 0);
+  const listenedSeconds = Math.floor(listenedMs / 1000);
+  const remainingSeconds = Math.max(0, Math.ceil((POST_UNLOCK_REQUIRED_MS - listenedMs) / 1000));
+  const progressRatio = listenedMs / POST_UNLOCK_REQUIRED_MS;
+  const requiresUnlock = isPostUnlockRequired();
+  const timeUnlocked = !requiresUnlock || postUnlockState.unlocked;
+  const playbackUnlocked = !requiresUnlock || Boolean(postUnlockState.playbackUnlocked);
+  const sequenceUnlocked = !requiresUnlock || !latestPostByCurrentUser;
+
+  if (composerUnlockFill) {
+    composerUnlockFill.style.width = `${(requiresUnlock ? progressRatio : 1) * 100}%`;
+  }
+
+  [
+    [composerUnlockTimeLock, timeUnlocked],
+    [composerUnlockPlayLock, playbackUnlocked],
+    [composerUnlockSequenceLock, sequenceUnlocked],
+  ].forEach(([lock, unlocked]) => {
+    if (!lock) {
+      return;
+    }
+
+    lock.dataset.unlocked = String(unlocked);
+    lock.textContent = unlocked ? "\uD83D\uDD13" : "\uD83D\uDD12";
+  });
+
+  if (composerUnlockStatus) {
+    if (!requiresUnlock) {
+      composerUnlockStatus.textContent = "タイムラインに曲がないので今は投稿できます";
+    } else if (timeUnlocked && playbackUnlocked && sequenceUnlocked) {
+      composerUnlockStatus.textContent = "次の投稿ができます";
+    } else if (!sequenceUnlocked) {
+      composerUnlockStatus.textContent = "ほかの人の投稿のあとに、次の投稿ができます";
+    } else if (!timeUnlocked && !playbackUnlocked) {
+      composerUnlockStatus.textContent = `あと${remainingSeconds}秒待って、タイムラインの再生ボタンを押してください`;
+    } else if (!timeUnlocked) {
+      composerUnlockStatus.textContent = `待機中です。あと${remainingSeconds}秒で次の投稿ができます`;
+    } else {
+      composerUnlockStatus.textContent = "タイムラインの再生ボタンを押すと投稿できます";
+    }
+  }
+
+  if (composerUnlockTime) {
+    composerUnlockTime.textContent = requiresUnlock
+      ? `${Math.min(30, listenedSeconds)} / 30秒`
+      : "待機なし";
+  }
+
+  updateSubmitButtonState();
+}
+
+function updateSubmitButtonState() {
+  if (!submitButton) {
+    return;
+  }
+
+  const locked = !isPostUnlockAvailable();
+  const remainingSeconds = Math.max(
+    0,
+    Math.ceil((POST_UNLOCK_REQUIRED_MS - (Number(postUnlockState.listenedMs) || 0)) / 1000),
+  );
+
+  submitButton.disabled = isSubmittingTrack || locked;
+  submitButton.dataset.submitting = String(isSubmittingTrack);
+  submitButton.dataset.locked = String(locked);
+
+  if (isSubmittingTrack) {
+    submitButton.textContent = "投稿中...";
+    return;
+  }
+
+  if (!locked) {
+    submitButton.textContent = submitButtonDefaultLabel;
+    return;
+  }
+
+  if (latestPostByCurrentUser) {
+    submitButton.textContent = "連続投稿できません";
+  } else if (!postUnlockState.unlocked && !postUnlockState.playbackUnlocked) {
+    submitButton.textContent = `あと ${remainingSeconds}秒 + 再生`;
+  } else if (!postUnlockState.unlocked) {
+    submitButton.textContent = `あと ${remainingSeconds}秒`;
+  } else {
+    submitButton.textContent = "再生で開錠";
+  }
 }
 
 function renderAutoPlayToggle() {
@@ -1563,6 +2116,7 @@ function stopAutoPlayMode(options = {}) {
   renderAutoPlayToggle();
   renderRadioControls();
   renderRadioMode();
+  renderComposerUnlock();
 
   if (!options.quiet) {
     setFeedback("連続再生モードを止めました。");
@@ -1803,6 +2357,8 @@ function activateTrack(track, playCountElement, options = {}) {
   if (autoPlayMode && usesManualSequenceMode()) {
     sequenceTrackId = track.id;
   }
+
+  syncPostUnlockProgress();
 
   renderPlayerDock({
     forceRestart: force,
