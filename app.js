@@ -1268,9 +1268,15 @@ function formatStamp(track) {
   }).format(date);
 }
 
-function buildAutoplayEmbedUrl(embedUrl) {
+function buildEmbedUrl(embedUrl, options = {}) {
   const url = new URL(embedUrl);
-  url.searchParams.set("autoplay", "1");
+
+  if (options.autoplay) {
+    url.searchParams.set("autoplay", "1");
+  } else {
+    url.searchParams.delete("autoplay");
+  }
+
   return url.toString();
 }
 
@@ -1298,7 +1304,9 @@ function openTrackShare(track) {
 }
 
 function updatePlayerDockEmbed(embedUrl, forceRestart = false) {
-  const nextSrc = buildAutoplayEmbedUrl(embedUrl);
+  const nextSrc = buildEmbedUrl(embedUrl, {
+    autoplay: autoPlayMode,
+  });
 
   if (playerDockIframe.src === nextSrc && !forceRestart) {
     return;
@@ -2381,7 +2389,9 @@ function activateTrack(track, playCountElement, options = {}) {
 }
 
 function prefetchEmbed(embedUrl) {
-  const href = buildAutoplayEmbedUrl(embedUrl);
+  const href = buildEmbedUrl(embedUrl, {
+    autoplay: false,
+  });
 
   if (prefetchedEmbedUrls.has(href)) {
     return;
