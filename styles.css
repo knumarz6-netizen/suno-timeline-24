@@ -137,7 +137,7 @@ body.radio-mode::before {
 body::after {
   background:
     linear-gradient(90deg, rgba(248, 250, 252, 0.98) 0%, rgba(248, 250, 252, 0.8) 35%, rgba(248, 250, 252, 0.1) 75%),
-    url("./assets/music-room-reference.png") right top / cover no-repeat;
+    url("./assets/music-room-reference.webp") right top / cover no-repeat;
   opacity: var(--photo-opacity);
   filter: var(--photo-filter);
   z-index: 0;
@@ -147,7 +147,7 @@ body::after {
 body.radio-mode::after {
   background:
     linear-gradient(90deg, rgba(8, 12, 20, 0.99) 0%, rgba(8, 12, 20, 0.85) 30%, rgba(8, 12, 20, 0) 80%),
-    url("./assets/music-room-reference.png") right top / cover no-repeat;
+    url("./assets/music-room-reference.webp") right top / cover no-repeat;
 }
 
 /* Typography Common Settings */
