@@ -1003,20 +1003,21 @@ body.radio-mode .track-card--spotlighted {
 .track-card__link {
   font-size: 0.72rem;
   font-weight: 700;
-  color: var(--text-soft);
-  background: var(--panel-soft);
-  border: 1px solid var(--line-strong);
+  color: #c2410c;
+  background: rgba(255, 247, 237, 0.96);
+  border: 3px solid var(--accent-amber);
   padding: 6px 12px;
   border-radius: 999px;
   text-decoration: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.72), 0 6px 16px rgba(245, 158, 11, 0.18);
   transition: var(--transition);
 }
 
 .track-card__link:hover {
   color: #ffffff;
-  background: var(--accent);
-  border-color: var(--accent);
-  box-shadow: 0 2px 8px var(--primary-glow);
+  background: var(--accent-amber);
+  border-color: #d97706;
+  box-shadow: 0 0 0 2px rgba(255, 251, 235, 0.86), 0 10px 24px rgba(245, 158, 11, 0.34);
 }
 
 /* Card Summary */
@@ -1389,7 +1390,18 @@ body.radio-mode .player-dock {
 }
 
 .player-dock__button--open {
+  color: #c2410c;
+  background: rgba(255, 247, 237, 0.96);
+  border: 3px solid var(--accent-amber);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.72), 0 6px 16px rgba(245, 158, 11, 0.18);
   text-decoration: none;
+}
+
+.player-dock__button--open:hover:not(:disabled) {
+  background: var(--accent-amber);
+  border-color: #d97706;
+  color: #ffffff;
+  box-shadow: 0 0 0 2px rgba(255, 251, 235, 0.86), 0 10px 24px rgba(245, 158, 11, 0.34);
 }
 
 .player-dock__frame {
